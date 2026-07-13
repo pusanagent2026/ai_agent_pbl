@@ -97,7 +97,7 @@ class GitHubToolChoosingAgent:
                     "role": "user",
                     "content": (
                         "도구 호출 횟수 한도에 도달했습니다. 지금까지 확인한 "
-                        "GitHub MCP 결과만 바탕으로 최종 답변을 작성하세요."
+                        "결과만 바탕으로 최종 답변을 작성하세요."
                     ),
                 },
             ],
@@ -133,7 +133,7 @@ class GitHubToolChoosingAgent:
             "type": "function",
             "function": {
                 "name": self._safe_tool_name(tool.name),
-                "description": tool.description or f"Call GitHub MCP tool {tool.name}.",
+                "description": tool.description or f"Call tool {tool.name}.",
                 "parameters": schema,
             },
         }

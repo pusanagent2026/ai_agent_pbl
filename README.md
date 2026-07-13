@@ -76,7 +76,17 @@ python -m github_ai_agent.web
 http://127.0.0.1:8787
 ```
 
-UI에서 `Save tasks to Notion`을 켜면 AI가 구체적인 할 일을 `create_notion_task` tool로 저장할 수 있습니다.
+UI는 2단계로 동작합니다.
+
+```text
+1. Analyze GitHub
+   GitHub 내용을 분석해서 Notion에 등록할 할 일 후보를 제안합니다.
+
+2. Notion에 등록 승인
+   사용자가 승인한 후보만 실제 Notion database에 저장합니다.
+```
+
+분석 단계에서는 Notion에 아무것도 저장하지 않습니다. 사용자가 승인 버튼을 눌러야 `create_notion_task`가 실행됩니다.
 
 ## 구조
 
