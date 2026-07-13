@@ -15,7 +15,7 @@ from github_ai_agent.tool_client import CombinedToolClient
 
 
 async def async_main() -> None:
-    load_dotenv()
+    load_dotenv(encoding="utf-8-sig")
 
     parser = argparse.ArgumentParser(
         description="Ask an AI agent to choose and call GitHub MCP tools."

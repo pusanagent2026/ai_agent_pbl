@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import os
+from datetime import date
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -12,6 +13,7 @@ from dotenv import load_dotenv
 
 from github_ai_agent.agent import GitHubToolChoosingAgent
 from github_ai_agent.github_api_client import DirectGitHubToolClient
+from github_ai_agent.google_calendar_client import GoogleCalendarToolClient
 from github_ai_agent.mcp_client import GitHubMcpClient
 from github_ai_agent.notion_client import NotionToolClient
 
@@ -57,7 +59,7 @@ HTML = r"""<!doctype html>
     }
     .repo { padding: 14px; margin: 18px 0; }
     .repo strong { display: block; overflow-wrap: anywhere; }
-    .chips, .task-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .chips, .task-meta, .member-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
     .chip, .tag {
       border-radius: 999px;
       padding: 5px 9px;
@@ -67,7 +69,24 @@ HTML = r"""<!doctype html>
       font-size: 12px;
     }
     .tag { background: #edf2f7; color: #334155; border: 0; }
+    .members { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
     .examples { display: grid; gap: 8px; margin-top: 12px; }
+    label.field { display: grid; gap: 6px; color: var(--muted); }
+    input[type="date"], textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      color: var(--text);
+      font: inherit;
+      background: #fff;
+    }
+    textarea { resize: vertical; }
+    textarea:focus, input[type="date"]:focus {
+      outline: 2px solid rgba(15, 118, 110, 0.22);
+      border-color: var(--accent);
+    }
+    #question { min-height: 110px; }
     button {
       appearance: none;
       border: 1px solid var(--line);
@@ -80,19 +99,9 @@ HTML = r"""<!doctype html>
     button:disabled { opacity: 0.55; cursor: not-allowed; }
     .example { text-align: left; padding: 10px 12px; }
     .example:hover { border-color: var(--accent); }
-    textarea {
-      width: 100%;
-      resize: vertical;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 12px;
-      color: var(--text);
-      font: inherit;
-    }
-    textarea:focus { outline: 2px solid rgba(15, 118, 110, 0.22); border-color: var(--accent); }
-    #question { min-height: 110px; }
     .composer { display: grid; gap: 10px; padding: 14px; }
     .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .button-row { display: flex; gap: 10px; flex-wrap: wrap; }
     .primary, .approve {
       min-width: 132px;
       border-color: var(--accent);
@@ -122,7 +131,7 @@ HTML = r"""<!doctype html>
   <div class="shell">
     <aside>
       <h1>GitHub AI Agent</h1>
-      <p class="muted">GitHub 기록에서 팀원과 작업 성향을 자동으로 읽고, 승인된 작업만 Notion에 등록합니다.</p>
+      <p class="muted">GitHub 기록에서 팀원과 작업 성향을 읽고, 승인된 작업만 Notion과 Google Calendar에 등록합니다.</p>
 
       <div class="repo">
         <span class="muted">Repository</span>
@@ -131,6 +140,13 @@ HTML = r"""<!doctype html>
           <span class="chip" id="backend">backend</span>
           <span class="chip" id="model">model</span>
           <span class="chip" id="notion">notion</span>
+          <span class="chip" id="calendar">calendar</span>
+        </div>
+        <div class="members">
+          <span class="muted">GitHub IDs</span>
+          <div class="member-list" id="members">
+            <span class="chip">loading...</span>
+          </div>
         </div>
       </div>
 
@@ -138,18 +154,25 @@ HTML = r"""<!doctype html>
       <div class="examples">
         <button class="example" data-question="우리 팀 누구누구 있어?">우리 팀 누구누구 있어?</button>
         <button class="example" data-question="할 일을 팀원들에게 배분해줘">할 일을 팀원들에게 배분해줘</button>
-        <button class="example" data-question="각자 최근에 많이 한 작업 기준으로 역할 나눠줘">작업 성향 기준 역할 분담</button>
+        <button class="example" data-question="각자 최근에 많이 한 작업 기준으로 오늘 할 일을 나눠줘">작업 성향 기준으로 할 일 분담</button>
         <button class="example" data-question="오늘 뭐부터 하면 좋을까?">오늘 뭐부터 하면 좋을까?</button>
       </div>
     </aside>
 
     <main>
       <div class="composer">
+        <label class="field">
+          프로젝트 전체 마감일
+          <input id="projectDeadline" type="date" />
+        </label>
         <textarea id="question" placeholder="예: 할 일을 팀원들에게 배분해줘"></textarea>
         <div class="actions">
           <span class="muted" id="status">Ready</span>
-          <button class="primary" id="analyze">Analyze GitHub</button>
-          <button class="approve" id="approve" disabled>Notion에 등록 승인</button>
+          <div class="button-row">
+            <button class="primary" id="analyze">Analyze GitHub</button>
+            <button class="approve" id="approveNotion" disabled>Notion 등록</button>
+            <button class="approve" id="approveCalendar" disabled>Calendar 등록</button>
+          </div>
         </div>
       </div>
 
@@ -161,8 +184,8 @@ HTML = r"""<!doctype html>
           <div id="tools" class="muted">AI가 GitHub 분석에 사용한 tool이 여기에 표시됩니다.</div>
         </section>
         <section>
-          <h2>Proposed Notion Tasks</h2>
-          <div id="tasks" class="muted">승인 전에는 Notion에 아무것도 저장되지 않습니다.</div>
+          <h2>Proposed Tasks</h2>
+          <div id="tasks" class="muted">승인 전에는 Notion이나 Calendar에 아무것도 저장되지 않습니다.</div>
         </section>
       </div>
     </main>
@@ -170,8 +193,10 @@ HTML = r"""<!doctype html>
 
   <script>
     const question = document.querySelector("#question");
+    const projectDeadline = document.querySelector("#projectDeadline");
     const analyze = document.querySelector("#analyze");
-    const approve = document.querySelector("#approve");
+    const approveNotion = document.querySelector("#approveNotion");
+    const approveCalendar = document.querySelector("#approveCalendar");
     const answer = document.querySelector("#answer");
     const tools = document.querySelector("#tools");
     const tasks = document.querySelector("#tasks");
@@ -179,6 +204,7 @@ HTML = r"""<!doctype html>
 
     let proposedTasks = [];
     let notionEnabled = false;
+    let calendarEnabled = false;
 
     document.querySelectorAll(".example").forEach((button) => {
       button.addEventListener("click", () => {
@@ -194,8 +220,11 @@ HTML = r"""<!doctype html>
       document.querySelector("#backend").textContent = config.backend;
       document.querySelector("#model").textContent = config.model;
       notionEnabled = Boolean(config.notion_enabled);
+      calendarEnabled = Boolean(config.calendar_enabled);
       document.querySelector("#notion").textContent = notionEnabled ? "notion on" : "notion off";
-      refreshApproveButton();
+      document.querySelector("#calendar").textContent = calendarEnabled ? "calendar on" : "calendar off";
+      renderMembers(config.members || [], config.member_warnings || []);
+      refreshApproveButtons();
     }
 
     function escapeHtml(value) {
@@ -207,8 +236,33 @@ HTML = r"""<!doctype html>
         .replaceAll("'", "&#039;");
     }
 
-    function refreshApproveButton() {
-      approve.disabled = !notionEnabled || proposedTasks.length === 0;
+    function refreshApproveButtons() {
+      const hasTasks = proposedTasks.length > 0;
+      approveNotion.disabled = !notionEnabled || !hasTasks;
+      approveCalendar.disabled = !calendarEnabled || !hasTasks;
+    }
+
+    function renderMembers(members, warnings) {
+      const membersEl = document.querySelector("#members");
+      membersEl.innerHTML = "";
+      if (!members.length) {
+        membersEl.innerHTML = "<span class='chip'>확인된 ID 없음</span>";
+      } else {
+        members.forEach((member) => {
+          const span = document.createElement("span");
+          span.className = "chip";
+          const label = member.github_id || member.login || member.name || "unknown";
+          span.title = member.role || member.contributions ? `${member.role || ""} ${member.contributions || ""}`.trim() : "";
+          span.textContent = label.startsWith("@") ? label : `@${label}`;
+          membersEl.appendChild(span);
+        });
+      }
+      warnings.forEach((warning) => {
+        const span = document.createElement("span");
+        span.className = "chip";
+        span.textContent = warning;
+        membersEl.appendChild(span);
+      });
     }
 
     function renderTools(selectedTools) {
@@ -229,7 +283,7 @@ HTML = r"""<!doctype html>
       proposedTasks = items || [];
       if (!proposedTasks.length) {
         tasks.innerHTML = "<span class='muted'>제안된 할 일이 없습니다.</span>";
-        refreshApproveButton();
+        refreshApproveButtons();
         return;
       }
       tasks.innerHTML = "";
@@ -246,14 +300,14 @@ HTML = r"""<!doctype html>
             <span class="tag">${escapeHtml(task.status || "To do")}</span>
             ${task.assignee ? `<span class="tag">담당: ${escapeHtml(task.assignee)}</span>` : ""}
             ${task.assignee_github ? `<span class="tag">@${escapeHtml(task.assignee_github)}</span>` : ""}
-            ${task.due ? `<span class="tag">${escapeHtml(task.due)}</span>` : ""}
+            ${task.due ? `<span class="tag">마감: ${escapeHtml(task.due)}</span>` : ""}
           </div>
           <div class="muted">${escapeHtml(task.reason || "")}</div>
           <pre>${escapeHtml(JSON.stringify(task, null, 2))}</pre>
         `;
         tasks.appendChild(div);
       });
-      refreshApproveButton();
+      refreshApproveButtons();
     }
 
     function selectedTasks() {
@@ -270,9 +324,10 @@ HTML = r"""<!doctype html>
         return;
       }
       analyze.disabled = true;
-      approve.disabled = true;
+      approveNotion.disabled = true;
+      approveCalendar.disabled = true;
       status.textContent = "Analyzing GitHub...";
-      answer.textContent = "GitHub 기록에서 팀원, 작업 성향, 할 일 후보를 분석하는 중입니다.";
+      answer.textContent = "GitHub 기록에서 팀원, 작업 성향, 마감일 후보를 분석하는 중입니다.";
       tools.innerHTML = "<span class='muted'>Tool 선택 대기 중...</span>";
       tasks.innerHTML = "<span class='muted'>할 일 후보 생성 중...</span>";
 
@@ -280,7 +335,10 @@ HTML = r"""<!doctype html>
         const response = await fetch("/api/analyze-tasks", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question: text }),
+          body: JSON.stringify({
+            question: text,
+            project_deadline: projectDeadline.value,
+          }),
         });
         const payload = await response.json();
         if (!response.ok) {
@@ -293,26 +351,27 @@ HTML = r"""<!doctype html>
       } catch (error) {
         proposedTasks = [];
         answer.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
-        tools.innerHTML = "<span class='muted'>요청이 실패했습니다.</span>";
+        tools.innerHTML = "<span class='muted'>요청에 실패했습니다.</span>";
         tasks.innerHTML = "<span class='muted'>할 일 후보를 만들지 못했습니다.</span>";
         status.textContent = "Error";
       } finally {
         analyze.disabled = false;
-        refreshApproveButton();
+        refreshApproveButtons();
       }
     }
 
-    async function approveTasks() {
+    async function postSelectedTasks(url, savingText, successText) {
       const items = selectedTasks();
       if (!items.length) {
         status.textContent = "No selected tasks";
         return;
       }
-      approve.disabled = true;
+      approveNotion.disabled = true;
+      approveCalendar.disabled = true;
       analyze.disabled = true;
-      status.textContent = "Saving to Notion...";
+      status.textContent = savingText;
       try {
-        const response = await fetch("/api/approve-tasks", {
+        const response = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ tasks: items }),
@@ -321,7 +380,8 @@ HTML = r"""<!doctype html>
         if (!response.ok) {
           throw new Error(payload.error || "Request failed");
         }
-        answer.textContent += `\n\nNotion에 ${payload.created.length}개의 할 일을 등록했습니다.`;
+        const count = (payload.created || []).length;
+        answer.textContent += `\n\n${successText}: ${count}개`;
         renderTools(payload.selected_tools || []);
         status.textContent = "Saved";
       } catch (error) {
@@ -329,14 +389,16 @@ HTML = r"""<!doctype html>
         status.textContent = "Error";
       } finally {
         analyze.disabled = false;
-        refreshApproveButton();
+        refreshApproveButtons();
       }
     }
 
     analyze.addEventListener("click", analyzeGithub);
-    approve.addEventListener("click", approveTasks);
+    approveNotion.addEventListener("click", () => postSelectedTasks("/api/approve-tasks", "Saving to Notion...", "Notion 등록 완료"));
+    approveCalendar.addEventListener("click", () => postSelectedTasks("/api/approve-calendar-events", "Saving to Calendar...", "Calendar 등록 완료"));
     question.addEventListener("keydown", (event) => {
-      if (event.ctrlKey && event.key === "Enter") {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
         analyzeGithub();
       }
     });
@@ -350,7 +412,7 @@ HTML = r"""<!doctype html>
 
 
 class AppHandler(BaseHTTPRequestHandler):
-    server_version = "GitHubAIAgentUI/0.5"
+    server_version = "GitHubAIAgentUI/0.8"
 
     def do_GET(self) -> None:
         if self.path == "/" or self.path.startswith("/?"):
@@ -358,6 +420,7 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/config":
             notion = NotionToolClient()
+            calendar = GoogleCalendarToolClient()
             self._send_json(
                 {
                     "owner": os.environ.get("GITHUB_OWNER", ""),
@@ -365,7 +428,10 @@ class AppHandler(BaseHTTPRequestHandler):
                     "model": os.environ.get("OPENAI_MODEL", "gpt-4.1-mini"),
                     "backend": os.environ.get("GITHUB_TOOL_BACKEND", "github-api"),
                     "notion_enabled": notion.enabled,
+                    "calendar_enabled": calendar.enabled,
+                    "calendar_timezone": calendar.config.timezone,
                     "assignee_property": notion.config.assignee_property,
+                    **_load_config_members(),
                 }
             )
             return
@@ -378,16 +444,20 @@ class AppHandler(BaseHTTPRequestHandler):
         if self.path == "/api/approve-tasks":
             self._handle_approve_tasks()
             return
+        if self.path == "/api/approve-calendar-events":
+            self._handle_approve_calendar_events()
+            return
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def _handle_analyze_tasks(self) -> None:
         try:
             payload = self._read_json()
             question = str(payload.get("question", "")).strip()
+            project_deadline = str(payload.get("project_deadline", "")).strip()
             if not question:
                 self._send_json({"error": "question is required"}, HTTPStatus.BAD_REQUEST)
                 return
-            result = asyncio.run(analyze_tasks(question))
+            result = asyncio.run(analyze_tasks(question, project_deadline=project_deadline))
             self._send_json(result)
         except Exception as error:
             self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -400,6 +470,18 @@ class AppHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "tasks are required"}, HTTPStatus.BAD_REQUEST)
                 return
             result = asyncio.run(create_notion_tasks(tasks))
+            self._send_json(result)
+        except Exception as error:
+            self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_approve_calendar_events(self) -> None:
+        try:
+            payload = self._read_json()
+            tasks = payload.get("tasks", [])
+            if not isinstance(tasks, list) or not tasks:
+                self._send_json({"error": "tasks are required"}, HTTPStatus.BAD_REQUEST)
+                return
+            result = asyncio.run(create_calendar_events(tasks))
             self._send_json(result)
         except Exception as error:
             self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -430,7 +512,7 @@ class AppHandler(BaseHTTPRequestHandler):
         self.wfile.write(encoded)
 
 
-async def analyze_tasks(question: str) -> dict[str, Any]:
+async def analyze_tasks(question: str, *, project_deadline: str = "") -> dict[str, Any]:
     backend = os.environ.get("GITHUB_TOOL_BACKEND", "github-api")
     agent = GitHubToolChoosingAgent()
     github_client = GitHubMcpClient() if backend == "mcp" else DirectGitHubToolClient()
@@ -443,48 +525,14 @@ async def analyze_tasks(question: str) -> dict[str, Any]:
             preloaded_tools = [
                 {"tool": "list_contributors", "arguments": {"per_page": 20}},
                 {"tool": "list_collaborators", "arguments": {"per_page": 20}},
+                {"tool": "list_organization_members", "arguments": {"per_page": 20}},
                 {"tool": "list_commits", "arguments": {"per_page": 20}},
+                {"tool": "list_issues", "arguments": {"state": "open", "per_page": 20}},
+                {"tool": "list_pull_requests", "arguments": {"state": "open", "per_page": 20}},
             ]
         github_client = DirectGitHubToolClient()
 
-    analysis_prompt = (
-        "사용자의 질문 표현이 달라도 맥락을 해석하세요. 사용자가 팀원, 구성원, 누가 있는지, "
-        "역할, 담당, 분배, 분담, 배정, 할 일 나누기 등을 묻는다면 모두 팀원/일 배분 요청으로 처리하세요.\n\n"
-        f"사용자 질문: {question}\n\n"
-        "GitHub에서 미리 조회한 repo 활동 정보:\n"
-        f"{preloaded_context or '미리 조회된 GitHub 활동 정보 없음'}\n\n"
-        "중요 규칙:\n"
-        "1. 팀원 목록은 사용자가 입력하는 값이 아니라 GitHub contributors/collaborators 결과에서 자동으로 판단합니다.\n"
-        "2. collaborators 조회가 권한 오류를 반환하면 그 사실을 설명하고 contributors와 commits 기준으로 판단합니다.\n"
-        "3. contributors는 커밋 기여자 목록이므로, repo 접근 권한이 있는 모든 팀원과 다를 수 있음을 필요하면 설명합니다.\n"
-        "4. 할 일 배분 요청이면 최근 commit message, author/login, 이슈/PR 상태를 근거로 팀원별 작업 성향을 추정하세요.\n"
-        "5. 특정 팀원이 특정 종류의 작업을 많이 했다면 비슷한 작업을 우선 배정하세요. 단, 한 사람에게 과도하게 몰리면 균형을 고려하세요.\n"
-        "6. 사용자가 팀원 목록만 물었다면 proposed_tasks는 빈 배열로 두세요.\n"
-        "7. 사용자가 일 배분, 할 일, 오늘 할 일, 역할 분담을 물었다면 proposed_tasks에 담당자 포함 작업 후보를 반드시 넣으세요.\n"
-        "   열린 이슈나 PR이 없어도 빈 배열로 두지 마세요. 최근 커밋, README/설정 변경, 워크플로우 부재, "
-        "   테스트 부재, 문서 정리 필요성 같은 GitHub 근거에서 점검/정리/개선 작업을 추론해서 배분하세요.\n"
-        "8. Notion에는 아직 저장하지 않습니다. 승인 버튼 이후에만 저장됩니다.\n\n"
-        "반드시 아래 JSON 형식만 출력하세요.\n"
-        "{\n"
-        '  "answer": "번호와 짧은 제목을 사용한 한국어 분석 결과",\n'
-        '  "proposed_tasks": [\n'
-        "    {\n"
-        '      "title": "구체적인 할 일 제목",\n'
-        '      "status": "To do",\n'
-        '      "priority": "High 또는 Medium 또는 Low",\n'
-        '      "source": "GitHub 근거 출처",\n'
-        '      "due": "",\n'
-        '      "reason": "GitHub 근거와 담당자 배정 이유",\n'
-        '      "assignee": "담당자 GitHub ID 또는 이름",\n'
-        '      "assignee_github": "담당자 GitHub ID"\n'
-        "    }\n"
-        "  ]\n"
-        "}\n"
-        "answer는 긴 문단 하나로 쓰지 말고, 내용별로 1., 2., 3.처럼 번호를 매기세요. "
-        "팀원 질문이면 첫 항목에 '확인된 팀원/기여자'를 두고 GitHub ID 목록을 나열하세요. "
-        "일 배분 질문이면 각 작업의 담당자와 배정 이유를 명확히 쓰세요. "
-        "할 일은 최대 5개만 제안하세요."
-    )
+    analysis_prompt = _build_analysis_prompt(question, preloaded_context, project_deadline)
 
     async with github_client as tools:
         result = await agent.run(analysis_prompt, tools)
@@ -492,7 +540,10 @@ async def analyze_tasks(question: str) -> dict[str, Any]:
     parsed = _parse_task_json(result.answer)
     return {
         "answer": parsed.get("answer") or result.answer,
-        "proposed_tasks": _normalize_tasks(parsed.get("proposed_tasks", [])),
+        "proposed_tasks": _normalize_tasks(
+            parsed.get("proposed_tasks", []),
+            project_deadline=project_deadline,
+        ),
         "selected_tools": [*preloaded_tools, *result.selected_tools],
     }
 
@@ -501,7 +552,6 @@ async def create_notion_tasks(tasks: list[Any]) -> dict[str, Any]:
     notion = NotionToolClient()
     created: list[dict[str, Any]] = []
     selected_tools: list[dict[str, Any]] = []
-
     async with notion:
         for task in _normalize_tasks(tasks):
             selected_tools.append({"tool": "create_notion_task", "arguments": task})
@@ -510,23 +560,199 @@ async def create_notion_tasks(tasks: list[Any]) -> dict[str, Any]:
                 created.append(json.loads(raw))
             except json.JSONDecodeError:
                 created.append({"created": True, "raw": raw})
+    return {"created": created, "selected_tools": selected_tools}
 
+
+async def create_calendar_events(tasks: list[Any]) -> dict[str, Any]:
+    calendar = GoogleCalendarToolClient()
+    created: list[dict[str, Any]] = []
+    selected_tools: list[dict[str, Any]] = []
+    async with calendar:
+        for task in _normalize_tasks(tasks):
+            selected_tools.append({"tool": "create_calendar_event", "arguments": task})
+            raw = await calendar.call_tool("create_calendar_event", task)
+            try:
+                created.append(json.loads(raw))
+            except json.JSONDecodeError:
+                created.append({"created": True, "raw": raw})
     return {"created": created, "selected_tools": selected_tools}
 
 
 async def _load_repo_context(tools: DirectGitHubToolClient) -> str:
     chunks: list[str] = []
-    for tool_name, arguments in (
+    calls = (
         ("list_contributors", {"per_page": 20}),
         ("list_collaborators", {"per_page": 20}),
+        ("list_organization_members", {"per_page": 20}),
         ("list_commits", {"per_page": 20}),
-    ):
+        ("list_issues", {"state": "open", "per_page": 20}),
+        ("list_pull_requests", {"state": "open", "per_page": 20}),
+    )
+    for tool_name, arguments in calls:
         try:
             result = await tools.call_tool(tool_name, arguments)
         except Exception as error:
             result = json.dumps({"error": str(error)}, ensure_ascii=False)
         chunks.append(f"{tool_name}:\n{result}")
     return "\n\n".join(chunks)
+
+
+def _build_analysis_prompt(
+    question: str,
+    preloaded_context: str,
+    project_deadline: str,
+) -> str:
+    today = date.today().isoformat()
+    deadline_rule = (
+        f"사용자가 입력한 프로젝트 전체 마감일은 {project_deadline}입니다. "
+        "모든 proposed_tasks의 due는 오늘 이후이면서 이 날짜 이하인 YYYY-MM-DD로 반드시 채우세요. "
+        "우선순위가 높은 작업은 더 이른 날짜에 배치하고, 작업들이 같은 날에 과도하게 몰리지 않게 분산하세요."
+        if project_deadline
+        else "사용자가 프로젝트 전체 마감일을 아직 입력하지 않았습니다. 작업 배분은 하되 due는 빈 문자열로 두고, answer에서 전체 마감일 입력이 필요하다고 안내하세요."
+    )
+    return f"""
+사용자 질문을 문장 그대로만 보지 말고 의미와 맥락으로 해석하세요.
+
+오늘 날짜: {today}
+프로젝트 전체 마감일 규칙: {deadline_rule}
+
+사용자 질문:
+{question}
+
+GitHub에서 미리 조회한 저장소 활동 정보:
+{preloaded_context or "미리 조회된 GitHub 활동 정보 없음"}
+
+처리 규칙:
+1. 팀원 목록은 GitHub contributors, collaborators, organization members 결과에서 자동으로 판단합니다.
+2. collaborators나 organization members 조회가 권한 오류 또는 빈 결과를 반환하면 그 사실을 설명하고 contributors와 commits 기준으로 확인 가능한 팀원을 말합니다.
+3. 사용자가 "팀원이 누구야", "누구누구 있어", "우리 팀 구성 알려줘", "참여자 알려줘"처럼 묻는 경우는 모두 팀원 조회 요청으로 처리합니다.
+4. 사용자가 "할 일 배분", "분담", "나눠줘", "누가 뭘 하면 돼", "각자 맡을 일", "오늘 할 일 정해줘"처럼 묻는 경우는 모두 작업 배분 요청으로 처리합니다.
+5. 작업 배분 요청이면 최근 commit message, author/login, open issues, open PRs를 근거로 팀원별 작업 성향을 추정하고 담당자를 배정합니다.
+6. 특정 팀원이 특정 종류의 작업을 많이 했다면 비슷한 작업을 우선 배정하되, 한 사람에게 과도하게 몰리지 않게 균형을 고려합니다.
+7. open issue나 PR이 없어도 "할 일이 없음"으로 끝내지 말고, 최근 커밋과 저장소 상태를 근거로 점검, 문서화, 테스트, 다음 기능 계획 같은 현실적인 작업 후보를 만듭니다.
+8. 사용자가 팀원 목록만 물었다면 proposed_tasks는 빈 배열로 둡니다.
+9. 사용자가 작업 배분이나 오늘 할 일을 물었다면 proposed_tasks에 담당자, 담당자 GitHub ID, 마감일 due를 포함한 작업 후보를 최대 5개 넣습니다.
+10. Notion과 Google Calendar에는 아직 저장하지 않습니다. 저장은 사용자가 UI에서 승인 버튼을 누른 뒤에만 실행됩니다.
+
+응답 형식:
+반드시 아래 JSON 형식만 출력하세요.
+
+{{
+  "answer": "번호가 붙은 한국어 분석 결과",
+  "proposed_tasks": [
+    {{
+      "title": "구체적인 할 일 제목",
+      "status": "To do",
+      "priority": "High 또는 Medium 또는 Low",
+      "source": "GitHub 근거 출처",
+      "due": "YYYY-MM-DD 또는 빈 문자열",
+      "reason": "GitHub 근거와 이 담당자에게 배정한 이유",
+      "assignee": "담당자 GitHub ID 또는 이름",
+      "assignee_github": "담당자 GitHub ID"
+    }}
+  ]
+}}
+
+answer는 긴 한 문단으로 이어 쓰지 말고, 내용별로 1., 2., 3.처럼 번호를 매겨 읽기 쉽게 작성하세요.
+"""
+
+
+def _load_config_members() -> dict[str, Any]:
+    if os.environ.get("GITHUB_TOOL_BACKEND", "github-api") != "github-api":
+        return {"members": [], "member_warnings": ["MCP backend에서는 UI 사전 조회 생략"]}
+    try:
+        client = DirectGitHubToolClient()
+    except Exception:
+        return {"members": [], "member_warnings": ["GitHub 설정 확인 필요"]}
+
+    async def load() -> dict[str, Any]:
+        contributors_raw = "[]"
+        collaborators_raw = "[]"
+        organization_members_raw = "[]"
+        warnings: list[str] = []
+        async with client as tools:
+            try:
+                contributors_raw = await tools.call_tool("list_contributors", {"per_page": 20})
+            except Exception:
+                warnings.append("contributors 조회 실패")
+            try:
+                collaborators_raw = await tools.call_tool("list_collaborators", {"per_page": 20})
+            except Exception:
+                warnings.append("collaborators 조회 실패")
+            try:
+                organization_members_raw = await tools.call_tool("list_organization_members", {"per_page": 20})
+            except Exception:
+                warnings.append("organization members 조회 실패")
+        warnings.extend(_extract_warnings(collaborators_raw, "collaborators"))
+        warnings.extend(_extract_warnings(organization_members_raw, "organization members"))
+        if _is_empty_list(organization_members_raw):
+            warnings.append("organization members 권한 필요")
+        return {
+            "members": _extract_members(contributors_raw, collaborators_raw, organization_members_raw),
+            "member_warnings": warnings,
+        }
+
+    try:
+        return asyncio.run(load())
+    except Exception:
+        return {"members": [], "member_warnings": ["GitHub 팀원 조회 실패"]}
+
+
+def _extract_warnings(raw: str, label: str) -> list[str]:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(parsed, dict) and parsed.get("error"):
+        code = parsed.get("error")
+        if code in {401, 403}:
+            return [f"{label} 권한 필요"]
+        return [f"{label} 조회 오류 {code}"]
+    return []
+
+
+def _is_empty_list(raw: str) -> bool:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(parsed, list) and len(parsed) == 0
+
+
+def _extract_members(*raw_payloads: str) -> list[dict[str, str]]:
+    by_login: dict[str, dict[str, str]] = {}
+    for raw in raw_payloads:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            if parsed.get("error"):
+                continue
+            items = parsed.get("items", [])
+        elif isinstance(parsed, list):
+            items = parsed
+        else:
+            items = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            login = str(item.get("login") or "").strip()
+            if not login:
+                user = item.get("user")
+                if isinstance(user, dict):
+                    login = str(user.get("login") or "").strip()
+            if not login:
+                continue
+            current = by_login.setdefault(
+                login.lower(),
+                {"github_id": login, "name": str(item.get("name") or login), "source": "github"},
+            )
+            if item.get("contributions") is not None:
+                current["contributions"] = str(item.get("contributions"))
+            if item.get("role_name"):
+                current["role"] = str(item.get("role_name"))
+    return sorted(by_login.values(), key=lambda member: member["github_id"].lower())
 
 
 def _parse_task_json(raw: str) -> dict[str, Any]:
@@ -546,10 +772,13 @@ def _parse_task_json(raw: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {"answer": raw, "proposed_tasks": []}
 
 
-def _normalize_tasks(tasks: Any) -> list[dict[str, Any]]:
+def _normalize_tasks(
+    tasks: Any,
+    *,
+    project_deadline: str = "",
+) -> list[dict[str, Any]]:
     if not isinstance(tasks, list):
         return []
-
     normalized: list[dict[str, Any]] = []
     allowed_priorities = {"High", "Medium", "Low"}
     for task in tasks[:5]:
@@ -561,13 +790,16 @@ def _normalize_tasks(tasks: Any) -> list[dict[str, Any]]:
         priority = str(task.get("priority", "Medium")).strip()
         if priority not in allowed_priorities:
             priority = "Medium"
+        due = str(task.get("due") or "").strip()
+        if project_deadline and (not due or due > project_deadline):
+            due = project_deadline
         normalized.append(
             {
                 "title": title,
                 "status": str(task.get("status") or "To do"),
                 "priority": priority,
                 "source": str(task.get("source") or "GitHub analysis"),
-                "due": str(task.get("due") or ""),
+                "due": due,
                 "reason": str(task.get("reason") or ""),
                 "assignee": str(task.get("assignee") or ""),
                 "assignee_github": str(task.get("assignee_github") or ""),
@@ -577,15 +809,13 @@ def _normalize_tasks(tasks: Any) -> list[dict[str, Any]]:
 
 
 def main() -> None:
-    load_dotenv()
+    load_dotenv(override=True, encoding="utf-8-sig")
     parser = argparse.ArgumentParser(description="Run the GitHub AI Agent web UI.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
     args = parser.parse_args()
-
     server = ThreadingHTTPServer((args.host, args.port), AppHandler)
-    url = f"http://{args.host}:{args.port}"
-    print(f"GitHub AI Agent UI running at {url}")
+    print(f"GitHub AI Agent UI running at http://{args.host}:{args.port}")
     print("Press Ctrl+C to stop.")
     server.serve_forever()
 
