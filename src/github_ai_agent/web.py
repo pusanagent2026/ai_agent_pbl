@@ -34,9 +34,7 @@ HTML = r"""<!doctype html>
       --warn: #9a3412;
       --code: #edf2f7;
     }
-
     * { box-sizing: border-box; }
-
     body {
       margin: 0;
       min-height: 100vh;
@@ -46,79 +44,30 @@ HTML = r"""<!doctype html>
       font-size: 15px;
       line-height: 1.5;
     }
-
-    .shell {
-      display: grid;
-      grid-template-columns: 320px minmax(0, 1fr);
-      min-height: 100vh;
-    }
-
-    aside {
-      border-right: 1px solid var(--line);
-      background: #eef3f6;
-      padding: 24px;
-    }
-
-    main {
-      display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
-      gap: 18px;
-      padding: 24px;
-    }
-
-    h1 {
-      margin: 0 0 10px;
-      font-size: 24px;
-      line-height: 1.2;
-      letter-spacing: 0;
-    }
-
-    h2 {
-      margin: 0 0 12px;
-      font-size: 16px;
-      letter-spacing: 0;
-    }
-
+    .shell { display: grid; grid-template-columns: 320px minmax(0, 1fr); min-height: 100vh; }
+    aside { border-right: 1px solid var(--line); background: #eef3f6; padding: 24px; }
+    main { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 18px; padding: 24px; }
+    h1 { margin: 0 0 10px; font-size: 24px; line-height: 1.2; letter-spacing: 0; }
+    h2 { margin: 0 0 12px; font-size: 16px; letter-spacing: 0; }
     .muted { color: var(--muted); }
-
     .repo, .composer, section, .task {
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--panel);
     }
-
-    .repo {
-      padding: 14px;
-      margin: 18px 0;
-    }
-
-    .repo strong {
-      display: block;
-      overflow-wrap: anywhere;
-    }
-
-    .chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 12px;
-    }
-
-    .chip {
-      border: 1px solid var(--line);
+    .repo { padding: 14px; margin: 18px 0; }
+    .repo strong { display: block; overflow-wrap: anywhere; }
+    .chips, .task-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .chip, .tag {
       border-radius: 999px;
       padding: 5px 9px;
       background: #fff;
+      border: 1px solid var(--line);
       color: var(--muted);
       font-size: 12px;
     }
-
-    .examples {
-      display: grid;
-      gap: 8px;
-      margin-top: 12px;
-    }
-
+    .tag { background: #edf2f7; color: #334155; border: 0; }
+    .examples { display: grid; gap: 8px; margin-top: 12px; }
     button {
       appearance: none;
       border: 1px solid var(--line);
@@ -128,28 +77,11 @@ HTML = r"""<!doctype html>
       cursor: pointer;
       font: inherit;
     }
-
-    button:disabled {
-      opacity: 0.55;
-      cursor: not-allowed;
-    }
-
-    .example {
-      text-align: left;
-      padding: 10px 12px;
-    }
-
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .example { text-align: left; padding: 10px 12px; }
     .example:hover { border-color: var(--accent); }
-
-    .composer {
-      display: grid;
-      gap: 10px;
-      padding: 14px;
-    }
-
     textarea {
       width: 100%;
-      min-height: 94px;
       resize: vertical;
       border: 1px solid var(--line);
       border-radius: 8px;
@@ -157,20 +89,10 @@ HTML = r"""<!doctype html>
       color: var(--text);
       font: inherit;
     }
-
-    textarea:focus {
-      outline: 2px solid rgba(15, 118, 110, 0.22);
-      border-color: var(--accent);
-    }
-
-    .actions {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
-
+    textarea:focus { outline: 2px solid rgba(15, 118, 110, 0.22); border-color: var(--accent); }
+    #question { min-height: 110px; }
+    .composer { display: grid; gap: 10px; padding: 14px; }
+    .actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
     .primary, .approve {
       min-width: 132px;
       border-color: var(--accent);
@@ -179,83 +101,16 @@ HTML = r"""<!doctype html>
       padding: 10px 14px;
       font-weight: 700;
     }
-
     .primary:hover, .approve:hover { background: var(--accent-dark); }
-
-    .results {
-      display: grid;
-      grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
-      gap: 18px;
-      min-height: 0;
-    }
-
-    section {
-      padding: 16px;
-      min-width: 0;
-      overflow: auto;
-    }
-
-    .answer {
-      white-space: pre-wrap;
-      word-break: keep-all;
-      overflow-wrap: anywhere;
-    }
-
-    .task {
-      padding: 12px;
-      margin-bottom: 10px;
-    }
-
-    .task-head {
-      display: flex;
-      gap: 10px;
-      align-items: flex-start;
-      justify-content: space-between;
-      margin-bottom: 8px;
-    }
-
-    .task-title {
-      font-weight: 800;
-      overflow-wrap: anywhere;
-    }
-
-    .task-meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin: 8px 0;
-    }
-
-    .tag {
-      border-radius: 999px;
-      background: #edf2f7;
-      color: #334155;
-      padding: 3px 8px;
-      font-size: 12px;
-    }
-
-    .tool {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 12px;
-      margin-bottom: 10px;
-      background: #fbfcfe;
-    }
-
-    pre {
-      margin: 8px 0 0;
-      overflow: auto;
-      border-radius: 8px;
-      background: var(--code);
-      padding: 10px;
-      font-size: 12px;
-    }
-
-    .error {
-      color: var(--warn);
-      font-weight: 700;
-    }
-
+    .results { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr); gap: 18px; min-height: 0; }
+    section { padding: 16px; min-width: 0; overflow: auto; }
+    .answer { white-space: pre-wrap; word-break: keep-all; overflow-wrap: anywhere; }
+    .task { padding: 12px; margin-bottom: 10px; }
+    .task-head { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; margin-bottom: 8px; }
+    .task-title { font-weight: 800; overflow-wrap: anywhere; }
+    .tool { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; background: #fbfcfe; }
+    pre { margin: 8px 0 0; overflow: auto; border-radius: 8px; background: var(--code); padding: 10px; font-size: 12px; }
+    .error { color: var(--warn); font-weight: 700; }
     @media (max-width: 920px) {
       .shell { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -267,7 +122,7 @@ HTML = r"""<!doctype html>
   <div class="shell">
     <aside>
       <h1>GitHub AI Agent</h1>
-      <p class="muted">GitHub 내용을 분석해 할 일을 제안하고, 승인한 항목만 Notion에 등록합니다.</p>
+      <p class="muted">GitHub 기록에서 팀원과 작업 성향을 자동으로 읽고, 승인된 작업만 Notion에 등록합니다.</p>
 
       <div class="repo">
         <span class="muted">Repository</span>
@@ -281,16 +136,16 @@ HTML = r"""<!doctype html>
 
       <h2>Examples</h2>
       <div class="examples">
-        <button class="example" data-question="우리 팀 프로젝트 지금 뭐해야 해?">우리 팀 프로젝트 지금 뭐해야 해?</button>
+        <button class="example" data-question="우리 팀 누구누구 있어?">우리 팀 누구누구 있어?</button>
+        <button class="example" data-question="할 일을 팀원들에게 배분해줘">할 일을 팀원들에게 배분해줘</button>
+        <button class="example" data-question="각자 최근에 많이 한 작업 기준으로 역할 나눠줘">작업 성향 기준 역할 분담</button>
         <button class="example" data-question="오늘 뭐부터 하면 좋을까?">오늘 뭐부터 하면 좋을까?</button>
-        <button class="example" data-question="프로젝트 상태 어때?">프로젝트 상태 어때?</button>
-        <button class="example" data-question="팀원들 작업 흐름 보고 다음 할 일 알려줘">팀원 작업 흐름 기반 추천</button>
       </div>
     </aside>
 
     <main>
       <div class="composer">
-        <textarea id="question" placeholder="예: 우리 팀 프로젝트 지금 뭐해야 해?"></textarea>
+        <textarea id="question" placeholder="예: 할 일을 팀원들에게 배분해줘"></textarea>
         <div class="actions">
           <span class="muted" id="status">Ready</span>
           <button class="primary" id="analyze">Analyze GitHub</button>
@@ -361,15 +216,11 @@ HTML = r"""<!doctype html>
         tools.innerHTML = "<span class='muted'>선택된 tool이 없습니다.</span>";
         return;
       }
-
       tools.innerHTML = "";
       selectedTools.forEach((item, index) => {
         const div = document.createElement("div");
         div.className = "tool";
-        div.innerHTML = `
-          <strong>${index + 1}. ${escapeHtml(item.tool)}</strong>
-          <pre>${escapeHtml(JSON.stringify(item.arguments || {}, null, 2))}</pre>
-        `;
+        div.innerHTML = `<strong>${index + 1}. ${escapeHtml(item.tool)}</strong><pre>${escapeHtml(JSON.stringify(item.arguments || {}, null, 2))}</pre>`;
         tools.appendChild(div);
       });
     }
@@ -381,7 +232,6 @@ HTML = r"""<!doctype html>
         refreshApproveButton();
         return;
       }
-
       tasks.innerHTML = "";
       proposedTasks.forEach((task, index) => {
         const div = document.createElement("div");
@@ -394,6 +244,8 @@ HTML = r"""<!doctype html>
           <div class="task-meta">
             <span class="tag">${escapeHtml(task.priority || "Medium")}</span>
             <span class="tag">${escapeHtml(task.status || "To do")}</span>
+            ${task.assignee ? `<span class="tag">담당: ${escapeHtml(task.assignee)}</span>` : ""}
+            ${task.assignee_github ? `<span class="tag">@${escapeHtml(task.assignee_github)}</span>` : ""}
             ${task.due ? `<span class="tag">${escapeHtml(task.due)}</span>` : ""}
           </div>
           <div class="muted">${escapeHtml(task.reason || "")}</div>
@@ -417,11 +269,10 @@ HTML = r"""<!doctype html>
         question.focus();
         return;
       }
-
       analyze.disabled = true;
       approve.disabled = true;
       status.textContent = "Analyzing GitHub...";
-      answer.textContent = "GitHub 내용을 확인하고 할 일 후보를 생성하는 중입니다.";
+      answer.textContent = "GitHub 기록에서 팀원, 작업 성향, 할 일 후보를 분석하는 중입니다.";
       tools.innerHTML = "<span class='muted'>Tool 선택 대기 중...</span>";
       tasks.innerHTML = "<span class='muted'>할 일 후보 생성 중...</span>";
 
@@ -457,11 +308,9 @@ HTML = r"""<!doctype html>
         status.textContent = "No selected tasks";
         return;
       }
-
       approve.disabled = true;
       analyze.disabled = true;
       status.textContent = "Saving to Notion...";
-
       try {
         const response = await fetch("/api/approve-tasks", {
           method: "POST",
@@ -473,7 +322,7 @@ HTML = r"""<!doctype html>
           throw new Error(payload.error || "Request failed");
         }
         answer.textContent += `\n\nNotion에 ${payload.created.length}개의 할 일을 등록했습니다.`;
-        renderTools([...(payload.selected_tools || [])]);
+        renderTools(payload.selected_tools || []);
         status.textContent = "Saved";
       } catch (error) {
         answer.innerHTML += `<br><span class="error">${escapeHtml(error.message)}</span>`;
@@ -491,7 +340,6 @@ HTML = r"""<!doctype html>
         analyzeGithub();
       }
     });
-
     loadConfig().catch(() => {
       document.querySelector("#repo").textContent = "config error";
     });
@@ -502,13 +350,12 @@ HTML = r"""<!doctype html>
 
 
 class AppHandler(BaseHTTPRequestHandler):
-    server_version = "GitHubAIAgentUI/0.3"
+    server_version = "GitHubAIAgentUI/0.5"
 
     def do_GET(self) -> None:
         if self.path == "/" or self.path.startswith("/?"):
             self._send_html(HTML)
             return
-
         if self.path == "/api/config":
             notion = NotionToolClient()
             self._send_json(
@@ -518,21 +365,19 @@ class AppHandler(BaseHTTPRequestHandler):
                     "model": os.environ.get("OPENAI_MODEL", "gpt-4.1-mini"),
                     "backend": os.environ.get("GITHUB_TOOL_BACKEND", "github-api"),
                     "notion_enabled": notion.enabled,
+                    "assignee_property": notion.config.assignee_property,
                 }
             )
             return
-
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
         if self.path == "/api/analyze-tasks":
             self._handle_analyze_tasks()
             return
-
         if self.path == "/api/approve-tasks":
             self._handle_approve_tasks()
             return
-
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def _handle_analyze_tasks(self) -> None:
@@ -542,7 +387,6 @@ class AppHandler(BaseHTTPRequestHandler):
             if not question:
                 self._send_json({"error": "question is required"}, HTTPStatus.BAD_REQUEST)
                 return
-
             result = asyncio.run(analyze_tasks(question))
             self._send_json(result)
         except Exception as error:
@@ -555,7 +399,6 @@ class AppHandler(BaseHTTPRequestHandler):
             if not isinstance(tasks, list) or not tasks:
                 self._send_json({"error": "tasks are required"}, HTTPStatus.BAD_REQUEST)
                 return
-
             result = asyncio.run(create_notion_tasks(tasks))
             self._send_json(result)
         except Exception as error:
@@ -590,41 +433,57 @@ class AppHandler(BaseHTTPRequestHandler):
 async def analyze_tasks(question: str) -> dict[str, Any]:
     backend = os.environ.get("GITHUB_TOOL_BACKEND", "github-api")
     agent = GitHubToolChoosingAgent()
+    github_client = GitHubMcpClient() if backend == "mcp" else DirectGitHubToolClient()
 
-    if backend == "mcp":
-        github_client = GitHubMcpClient()
-    else:
+    preloaded_context = ""
+    preloaded_tools: list[dict[str, Any]] = []
+    if backend == "github-api":
+        async with github_client as tools:
+            preloaded_context = await _load_repo_context(tools)
+            preloaded_tools = [
+                {"tool": "list_contributors", "arguments": {"per_page": 20}},
+                {"tool": "list_collaborators", "arguments": {"per_page": 20}},
+                {"tool": "list_commits", "arguments": {"per_page": 20}},
+            ]
         github_client = DirectGitHubToolClient()
 
     analysis_prompt = (
-        "사용자가 아래처럼 짧거나 일상적인 질문을 하더라도, 당신의 역할은 "
-        "GitHub 데이터를 근거로 팀이 지금 해야 할 일을 자동으로 도출하는 것입니다.\n\n"
+        "사용자의 질문 표현이 달라도 맥락을 해석하세요. 사용자가 팀원, 구성원, 누가 있는지, "
+        "역할, 담당, 분배, 분담, 배정, 할 일 나누기 등을 묻는다면 모두 팀원/일 배분 요청으로 처리하세요.\n\n"
         f"사용자 질문: {question}\n\n"
-        "질문에 'Notion', '등록', '할 일 후보'라는 말이 없어도 항상 다음을 수행하세요.\n"
-        "1. GitHub commits/issues/PR/workflow 정보를 필요한 만큼 확인합니다.\n"
-        "2. 현재 팀이 해야 할 구체적인 작업 후보를 추론합니다.\n"
-        "3. 후보를 사용자가 승인할 수 있도록 proposed_tasks에 넣습니다.\n"
-        "4. Notion에는 아직 저장하지 않습니다.\n\n"
+        "GitHub에서 미리 조회한 repo 활동 정보:\n"
+        f"{preloaded_context or '미리 조회된 GitHub 활동 정보 없음'}\n\n"
+        "중요 규칙:\n"
+        "1. 팀원 목록은 사용자가 입력하는 값이 아니라 GitHub contributors/collaborators 결과에서 자동으로 판단합니다.\n"
+        "2. collaborators 조회가 권한 오류를 반환하면 그 사실을 설명하고 contributors와 commits 기준으로 판단합니다.\n"
+        "3. contributors는 커밋 기여자 목록이므로, repo 접근 권한이 있는 모든 팀원과 다를 수 있음을 필요하면 설명합니다.\n"
+        "4. 할 일 배분 요청이면 최근 commit message, author/login, 이슈/PR 상태를 근거로 팀원별 작업 성향을 추정하세요.\n"
+        "5. 특정 팀원이 특정 종류의 작업을 많이 했다면 비슷한 작업을 우선 배정하세요. 단, 한 사람에게 과도하게 몰리면 균형을 고려하세요.\n"
+        "6. 사용자가 팀원 목록만 물었다면 proposed_tasks는 빈 배열로 두세요.\n"
+        "7. 사용자가 일 배분, 할 일, 오늘 할 일, 역할 분담을 물었다면 proposed_tasks에 담당자 포함 작업 후보를 반드시 넣으세요.\n"
+        "   열린 이슈나 PR이 없어도 빈 배열로 두지 마세요. 최근 커밋, README/설정 변경, 워크플로우 부재, "
+        "   테스트 부재, 문서 정리 필요성 같은 GitHub 근거에서 점검/정리/개선 작업을 추론해서 배분하세요.\n"
+        "8. Notion에는 아직 저장하지 않습니다. 승인 버튼 이후에만 저장됩니다.\n\n"
         "반드시 아래 JSON 형식만 출력하세요.\n"
         "{\n"
-        '  "answer": "사용자에게 보여줄 한국어 분석 결과",\n'
+        '  "answer": "번호와 짧은 제목을 사용한 한국어 분석 결과",\n'
         '  "proposed_tasks": [\n'
         "    {\n"
         '      "title": "구체적인 할 일 제목",\n'
         '      "status": "To do",\n'
         '      "priority": "High 또는 Medium 또는 Low",\n'
-        '      "source": "GitHub commits/issues/PRs 등 근거 출처",\n'
+        '      "source": "GitHub 근거 출처",\n'
         '      "due": "",\n'
-        '      "reason": "GitHub 근거 기반으로 왜 필요한지"\n'
+        '      "reason": "GitHub 근거와 담당자 배정 이유",\n'
+        '      "assignee": "담당자 GitHub ID 또는 이름",\n'
+        '      "assignee_github": "담당자 GitHub ID"\n'
         "    }\n"
         "  ]\n"
         "}\n"
-        "answer는 긴 문단 하나로 쓰지 마세요. 내용별로 자연스럽게 나누어 "
-        "1., 2., 3.처럼 번호를 매기고, 각 번호에는 짧은 제목과 핵심 내용을 넣으세요. "
-        "필요하면 각 번호 아래에 '-' 불릿을 사용하세요. "
-        "번호 제목은 실제 분석 내용에 맞게 자유롭게 정하세요. "
-        "할 일은 최대 5개만 제안하세요. 근거가 부족해도 최근 활동을 바탕으로 "
-        "합리적인 점검/확인 작업을 제안하세요."
+        "answer는 긴 문단 하나로 쓰지 말고, 내용별로 1., 2., 3.처럼 번호를 매기세요. "
+        "팀원 질문이면 첫 항목에 '확인된 팀원/기여자'를 두고 GitHub ID 목록을 나열하세요. "
+        "일 배분 질문이면 각 작업의 담당자와 배정 이유를 명확히 쓰세요. "
+        "할 일은 최대 5개만 제안하세요."
     )
 
     async with github_client as tools:
@@ -634,7 +493,7 @@ async def analyze_tasks(question: str) -> dict[str, Any]:
     return {
         "answer": parsed.get("answer") or result.answer,
         "proposed_tasks": _normalize_tasks(parsed.get("proposed_tasks", [])),
-        "selected_tools": result.selected_tools,
+        "selected_tools": [*preloaded_tools, *result.selected_tools],
     }
 
 
@@ -652,10 +511,22 @@ async def create_notion_tasks(tasks: list[Any]) -> dict[str, Any]:
             except json.JSONDecodeError:
                 created.append({"created": True, "raw": raw})
 
-    return {
-        "created": created,
-        "selected_tools": selected_tools,
-    }
+    return {"created": created, "selected_tools": selected_tools}
+
+
+async def _load_repo_context(tools: DirectGitHubToolClient) -> str:
+    chunks: list[str] = []
+    for tool_name, arguments in (
+        ("list_contributors", {"per_page": 20}),
+        ("list_collaborators", {"per_page": 20}),
+        ("list_commits", {"per_page": 20}),
+    ):
+        try:
+            result = await tools.call_tool(tool_name, arguments)
+        except Exception as error:
+            result = json.dumps({"error": str(error)}, ensure_ascii=False)
+        chunks.append(f"{tool_name}:\n{result}")
+    return "\n\n".join(chunks)
 
 
 def _parse_task_json(raw: str) -> dict[str, Any]:
@@ -664,17 +535,14 @@ def _parse_task_json(raw: str) -> dict[str, Any]:
         text = text.strip("`")
         if text.lower().startswith("json"):
             text = text[4:].strip()
-
     start = text.find("{")
     end = text.rfind("}")
     if start >= 0 and end > start:
         text = text[start : end + 1]
-
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
         return {"answer": raw, "proposed_tasks": []}
-
     return parsed if isinstance(parsed, dict) else {"answer": raw, "proposed_tasks": []}
 
 
@@ -684,19 +552,15 @@ def _normalize_tasks(tasks: Any) -> list[dict[str, Any]]:
 
     normalized: list[dict[str, Any]] = []
     allowed_priorities = {"High", "Medium", "Low"}
-
     for task in tasks[:5]:
         if not isinstance(task, dict):
             continue
-
         title = str(task.get("title", "")).strip()
         if not title:
             continue
-
         priority = str(task.get("priority", "Medium")).strip()
         if priority not in allowed_priorities:
             priority = "Medium"
-
         normalized.append(
             {
                 "title": title,
@@ -705,9 +569,10 @@ def _normalize_tasks(tasks: Any) -> list[dict[str, Any]]:
                 "source": str(task.get("source") or "GitHub analysis"),
                 "due": str(task.get("due") or ""),
                 "reason": str(task.get("reason") or ""),
+                "assignee": str(task.get("assignee") or ""),
+                "assignee_github": str(task.get("assignee_github") or ""),
             }
         )
-
     return normalized
 
 
