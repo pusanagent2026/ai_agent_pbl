@@ -6,10 +6,11 @@ import json
 
 from dotenv import load_dotenv
 
-from github_ai_agent.agent import GitHubToolChoosingAgent
-from github_ai_agent.mcp_client import GitHubMcpClient
-from github_ai_agent.notion_client import NotionToolClient
-from github_ai_agent.tool_client import CombinedToolClient
+from github_ai_agent.orchestrator.agent import OrchestratorAgent
+from github_ai_agent.orchestrator.domains import (
+    build_github_domain_agent,
+    build_notion_domain_agent,
+)
 
 
 async def async_main() -> None:
@@ -22,6 +23,11 @@ async def async_main() -> None:
     parser.add_argument("--owner", help="GitHub owner/org. Defaults to GITHUB_OWNER.")
     parser.add_argument("--repo", help="GitHub repo. Defaults to GITHUB_REPO.")
     parser.add_argument("--model", help="OpenAI model. Defaults to OPENAI_MODEL.")
+    parser.add_argument(
+        "--backend",
+        choices=["github-api", "mcp"],
+        help="GitHub tool backend. Defaults to GITHUB_TOOL_BACKEND (github-api).",
+    )
     parser.add_argument(
         "--debug",
         action="store_true",
@@ -45,8 +51,6 @@ async def async_main() -> None:
         model=args.model,
     )
 
-    github_client = GitHubMcpClient()
-    tool_client = CombinedToolClient([github_client, NotionToolClient()])
     question = args.question
     if args.save_to_notion:
         question += (
@@ -57,7 +61,7 @@ async def async_main() -> None:
     result = await orchestrator.run(question)
 
     if args.debug:
-        print("\n[Selected GitHub tools: mcp]")
+        print("\n[Selected tools]")
         print(json.dumps(result.selected_tools, ensure_ascii=False, indent=2))
         print("\n[Answer]")
 
