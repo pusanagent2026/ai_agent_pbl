@@ -3,12 +3,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 
 from dotenv import load_dotenv
 
 from github_ai_agent.agent import GitHubToolChoosingAgent
-from github_ai_agent.github_api_client import DirectGitHubToolClient
 from github_ai_agent.mcp_client import GitHubMcpClient
 from github_ai_agent.notion_client import NotionToolClient
 from github_ai_agent.tool_client import CombinedToolClient
@@ -30,12 +28,6 @@ async def async_main() -> None:
         help="Print selected GitHub tools and arguments.",
     )
     parser.add_argument(
-        "--backend",
-        choices=["github-api", "mcp"],
-        default=os.environ.get("GITHUB_TOOL_BACKEND", "github-api"),
-        help="Use github-api now, or mcp later with Docker/local MCP server.",
-    )
-    parser.add_argument(
         "--save-to-notion",
         action="store_true",
         help="Allow the agent to create Notion tasks from the answer.",
@@ -48,11 +40,7 @@ async def async_main() -> None:
         repo=args.repo,
     )
 
-    if args.backend == "mcp":
-        github_client = GitHubMcpClient()
-    else:
-        github_client = DirectGitHubToolClient(owner=args.owner, repo=args.repo)
-
+    github_client = GitHubMcpClient()
     tool_client = CombinedToolClient([github_client, NotionToolClient()])
     question = args.question
     if args.save_to_notion:
@@ -65,7 +53,7 @@ async def async_main() -> None:
         result = await agent.run(question, github_tools)
 
     if args.debug:
-        print(f"\n[Selected GitHub tools: {args.backend}]")
+        print("\n[Selected GitHub tools: mcp]")
         print(json.dumps(result.selected_tools, ensure_ascii=False, indent=2))
         print("\n[Answer]")
 

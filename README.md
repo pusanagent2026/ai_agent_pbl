@@ -1,10 +1,10 @@
 # GitHub AI Tool Agent
 
-사용자의 질문을 보고 AI가 필요한 GitHub, Notion, Google Calendar tool을 스스로 선택해 호출하는 예제 프로젝트입니다.
+사용자의 질문을 보고 AI가 필요한 GitHub MCP, Notion, Google Calendar tool을 스스로 선택해 호출하는 예제 프로젝트입니다.
 
 ## 주요 기능
 
-- GitHub 저장소 기록을 읽어 프로젝트 상태를 분석합니다.
+- GitHub MCP tool을 통해 저장소 기록을 읽어 프로젝트 상태를 분석합니다.
 - 저장소의 팀원 GitHub ID를 contributors, collaborators, organization members 정보에서 자동으로 읽어옵니다.
 - "팀원이 누구야?", "누구누구 있어?", "참여자 알려줘"처럼 의미가 같은 질문에 팀원 목록을 답합니다.
 - "할 일을 팀원들에게 배분해줘", "각자 뭐 하면 돼?", "오늘 할 일 나눠줘"처럼 의미가 같은 요청에 작업을 분배합니다.
@@ -12,38 +12,72 @@
 - 사용자가 프로젝트 전체 마감일을 입력하면, AI가 그 기한 안에서 각 작업의 마감일을 자동 생성합니다.
 - AI가 제안한 작업은 바로 저장되지 않고, UI에서 사용자가 승인한 항목만 Notion 또는 Google Calendar에 등록됩니다.
 
-## GitHub에서 읽어오는 정보
+## GitHub MCP 인증
+
+GitHub 데이터는 직접 REST API backend로 읽지 않고, `GITHUB_MCP_COMMAND`로 실행되는 GitHub MCP 서버를 통해서만 읽습니다.
+
+서비스형 구조에서는 사용자가 직접 token을 입력하지 않도록 GitHub App installation token을 사용합니다.
+
+### GitHub App 만들기
+
+1. GitHub에서 조직 또는 계정의 `Settings`로 이동합니다.
+2. `Developer settings` → `GitHub Apps` → `New GitHub App`을 선택합니다.
+3. App 이름을 입력합니다.
+4. `Homepage URL`은 로컬 테스트라면 `http://127.0.0.1:8787`로 둡니다.
+5. Webhook은 지금 단계에서는 끄거나 비워도 됩니다.
+6. Repository permissions를 설정합니다.
+
+권장 권한:
 
 ```text
-get_repository             저장소 이름, 설명, 기본 브랜치, 최근 push 시각, 열린 이슈 수
-list_issues                열린/닫힌 이슈 목록과 제목, 본문, 상태, 작성자
-list_pull_requests         열린/닫힌 PR 목록과 제목, 상태, 작성자, 병합 여부
-list_commits               최근 커밋 메시지, 작성자, 작성 시각
-list_contributors          커밋 기반 contributor GitHub ID와 기여 수
-list_collaborators         저장소 collaborator GitHub ID와 role
-list_organization_members  조직 멤버 GitHub ID
-list_workflow_runs         GitHub Actions 실행 상태와 결론
+Contents: Read-only
+Issues: Read-only
+Pull requests: Read-only
+Actions: Read-only
+Metadata: Read-only
+Administration: Read-only       # collaborators 조회가 필요할 때
 ```
 
-## Setup
+Organization members를 읽어야 한다면 Organization permissions에서 `Members: Read-only`도 추가합니다.
 
-```powershell
-cd "C:\ai_agent_pbl2"
-python -m venv .venv
-.venv\Scripts\activate
-pip install -e .
+7. GitHub App을 생성합니다.
+8. App 상세 화면에서 `App ID`를 복사합니다.
+9. `Private keys` 섹션에서 private key를 생성하고 `.pem` 파일을 다운로드합니다.
+10. `Install App`에서 `pusanagent2026/ai_agent_pbl` 저장소에 설치합니다.
+11. 설치 후 URL의 `installation_id`를 확인합니다.
+
+설치 URL 예시:
+
+```text
+https://github.com/organizations/pusanagent2026/settings/installations/12345678
 ```
 
-프로젝트 루트에 `.env` 파일을 만들고 값을 채웁니다. `.env`에는 실제 API key가 들어가므로 GitHub에 올리면 안 됩니다.
+여기서 `12345678`이 `GITHUB_APP_INSTALLATION_ID`입니다.
+
+### GitHub MCP Docker 설정
+
+Docker Desktop이 설치되어 있으면 `.env`에 아래처럼 설정합니다.
+
+```env
+GITHUB_OWNER=pusanagent2026
+GITHUB_REPO=ai_agent_pbl
+
+GITHUB_APP_ID=your-github-app-id
+GITHUB_APP_INSTALLATION_ID=your-installation-id
+GITHUB_APP_PRIVATE_KEY_FILE=C:\secure-path\your-github-app.private-key.pem
+
+GITHUB_MCP_COMMAND=C:\Progra~1\Docker\Docker\resources\bin\docker.exe run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server
+```
+
+앱은 실행 시 `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, private key로 GitHub App installation token을 자동 발급하고, 그 값을 `GITHUB_PERSONAL_ACCESS_TOKEN`으로 MCP 서버에 주입합니다.
+
+따라서 서비스 사용자는 GitHub PAT를 직접 입력하지 않아도 됩니다.
+
+## OpenAI 설정
 
 ```env
 OPENAI_API_KEY=your-openai-api-key
 OPENAI_MODEL=gpt-4.1-mini
-
-GITHUB_TOKEN=your-github-token
-GITHUB_OWNER=pusanagent2026
-GITHUB_REPO=ai_agent_pbl
-GITHUB_TOOL_BACKEND=github-api
 ```
 
 ## Notion 설정
@@ -63,14 +97,6 @@ NOTION_ASSIGNEE_PROPERTY=담당자
 
 ## Google Calendar API 설정
 
-기능 구현과 테스트는 안정적인 Google Calendar API 방식으로 진행합니다.
-
-1. Google Cloud Console에서 Calendar API를 사용 설정합니다.
-2. 서비스 계정을 만들고 JSON key 파일을 내려받습니다.
-3. Google Calendar에서 사용할 캘린더를 서비스 계정 이메일에 공유합니다.
-4. 서비스 계정 권한은 이벤트 생성이 가능하도록 설정합니다.
-5. `.env`에 아래 값을 추가합니다.
-
 ```env
 GOOGLE_CALENDAR_BACKEND=api
 GOOGLE_CALENDAR_ID=your-calendar-id
@@ -78,30 +104,14 @@ GOOGLE_SERVICE_ACCOUNT_FILE=C:\secure-path\google-service-account.json
 GOOGLE_CALENDAR_TIMEZONE=Asia/Seoul
 ```
 
-`GOOGLE_CALENDAR_ID`는 Google Calendar의 `설정 및 공유` → `캘린더 통합` → `캘린더 ID`에서 확인합니다.
-
-`GOOGLE_SERVICE_ACCOUNT_FILE`은 Google Cloud 서비스 계정에서 내려받은 JSON key 파일의 실제 경로입니다.
-
 Calendar 등록은 작업의 `due` 날짜를 all-day 이벤트로 생성합니다. `due`는 사용자가 입력한 프로젝트 전체 마감일 안에서 AI가 자동 생성합니다.
 
-## Calendar MCP 확장 방향
-
-Google Calendar remote MCP endpoint는 아래처럼 설정할 수 있지만, 실제 사용에는 Google OAuth token flow가 추가로 필요합니다. 현재 구현 테스트는 API backend를 사용합니다.
-
-```env
-GOOGLE_CALENDAR_BACKEND=mcp
-CALENDAR_MCP_URL=https://calendarmcp.googleapis.com/mcp/v1
-CALENDAR_MCP_AUTH_TOKEN=
-CALENDAR_MCP_CREATE_EVENT_TOOL=
-GOOGLE_CALENDAR_ID=your-calendar-id
-GOOGLE_CALENDAR_TIMEZONE=Asia/Seoul
-```
-
-## UI 실행
+## 실행
 
 ```powershell
 cd "C:\ai_agent_pbl2"
 .venv\Scripts\activate
+pip install -e .
 python -m github_ai_agent.web
 ```
 
@@ -111,7 +121,7 @@ python -m github_ai_agent.web
 http://127.0.0.1:8787
 ```
 
-UI는 아래 흐름으로 동작합니다.
+UI 흐름:
 
 ```text
 1. 프로젝트 전체 마감일 입력
@@ -129,12 +139,11 @@ src/github_ai_agent/
   agent.py                  # LLM tool-selection loop
   cli.py                    # terminal interface
   web.py                    # web UI server and approval flow
-  github_api_client.py      # GitHub REST API tool backend
+  mcp_client.py             # GitHub MCP backend
+  github_app_auth.py        # GitHub App installation token provider
   notion_client.py          # Notion task creation tool backend
   google_calendar_client.py # Google Calendar event creation tool backend
   tool_client.py            # combines multiple tool clients
-  mcp_client.py             # MCP backend for later
-  prompts.py                # system prompt
 ```
 
 ## README 갱신 원칙
