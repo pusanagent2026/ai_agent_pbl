@@ -34,10 +34,15 @@ async def async_main() -> None:
     )
     args = parser.parse_args()
 
-    agent = GitHubToolChoosingAgent(
-        model=args.model,
+    github_domain = build_github_domain_agent(
         owner=args.owner,
         repo=args.repo,
+        backend=args.backend,
+    )
+    notion_domain = build_notion_domain_agent()
+    orchestrator = OrchestratorAgent(
+        domains=[github_domain, notion_domain],
+        model=args.model,
     )
 
     github_client = GitHubMcpClient()
@@ -49,8 +54,7 @@ async def async_main() -> None:
             "create them in Notion using the available Notion task tool."
         )
 
-    async with tool_client as github_tools:
-        result = await agent.run(question, github_tools)
+    result = await orchestrator.run(question)
 
     if args.debug:
         print("\n[Selected GitHub tools: mcp]")

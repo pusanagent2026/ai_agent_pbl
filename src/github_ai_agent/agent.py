@@ -26,6 +26,7 @@ class GitHubToolChoosingAgent:
         owner: str | None = None,
         repo: str | None = None,
         max_tool_rounds: int = 6,
+        system_prompt: str | None = None,
     ) -> None:
         self.client = AsyncOpenAI()
         self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
@@ -33,6 +34,7 @@ class GitHubToolChoosingAgent:
         self.owner = owner or default_owner
         self.repo = repo or default_repo
         self.max_tool_rounds = max_tool_rounds
+        self.system_prompt = system_prompt or SYSTEM_PROMPT
 
     async def run(self, question: str, mcp: GitHubMcpClient) -> AgentResult:
         mcp_tools = await mcp.list_tools()
@@ -41,7 +43,7 @@ class GitHubToolChoosingAgent:
         openai_tools = [self._to_openai_tool(tool) for tool in mcp_tools]
 
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": self.system_prompt},
             {
                 "role": "user",
                 "content": self._build_user_message(question),
