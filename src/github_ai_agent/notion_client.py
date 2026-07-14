@@ -19,6 +19,7 @@ class NotionConfig:
     source_property: str
     due_property: str
     reason_property: str
+    assignee_property: str
 
 
 class NotionToolClient:
@@ -39,6 +40,7 @@ class NotionToolClient:
             source_property=os.environ.get("NOTION_SOURCE_PROPERTY", "Source"),
             due_property=os.environ.get("NOTION_DUE_PROPERTY", "Due"),
             reason_property=os.environ.get("NOTION_REASON_PROPERTY", "Reason"),
+            assignee_property=os.environ.get("NOTION_ASSIGNEE_PROPERTY", ""),
         )
 
     @property
@@ -91,6 +93,14 @@ class NotionToolClient:
                             "type": "string",
                             "description": "Brief evidence-based reason for creating the task.",
                         },
+                        "assignee": {
+                            "type": "string",
+                            "description": "Assigned team member name.",
+                        },
+                        "assignee_github": {
+                            "type": "string",
+                            "description": "Assigned team member GitHub username.",
+                        },
                     },
                     "required": ["title"],
                     "additionalProperties": False,
@@ -139,6 +149,11 @@ class NotionToolClient:
         self._set_rich_text(properties, self.config.source_property, arguments.get("source"))
         self._set_rich_text(properties, self.config.reason_property, arguments.get("reason"))
         self._set_date(properties, self.config.due_property, arguments.get("due"))
+        if self.config.assignee_property:
+            assignee = str(arguments.get("assignee") or "")
+            github_id = str(arguments.get("assignee_github") or "")
+            label = f"{assignee} ({github_id})" if github_id else assignee
+            self._set_rich_text(properties, self.config.assignee_property, label)
 
         return {
             "parent": {"database_id": self.config.database_id},

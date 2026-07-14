@@ -103,6 +103,57 @@ class DirectGitHubToolClient:
                 ),
             ),
             McpTool(
+                name="list_contributors",
+                description=(
+                    "List repository contributors based on commits. Useful when the user asks "
+                    "who is on the team or who has been active in the repository."
+                ),
+                input_schema=self._schema(
+                    {
+                        "per_page": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 20,
+                            "default": 20,
+                        }
+                    }
+                ),
+            ),
+            McpTool(
+                name="list_collaborators",
+                description=(
+                    "List repository collaborators visible to the token. Useful for identifying "
+                    "people who have access to the repository. May require additional GitHub token permissions."
+                ),
+                input_schema=self._schema(
+                    {
+                        "per_page": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 20,
+                            "default": 20,
+                        }
+                    }
+                ),
+            ),
+            McpTool(
+                name="list_organization_members",
+                description=(
+                    "List members of the organization that owns the repository. Useful as a fallback "
+                    "when collaborator lookup is restricted for organization-owned repositories."
+                ),
+                input_schema=self._schema(
+                    {
+                        "per_page": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 20,
+                            "default": 20,
+                        }
+                    }
+                ),
+            ),
+            McpTool(
                 name="list_workflow_runs",
                 description="List recent GitHub Actions workflow runs. Useful for CI status and broken builds.",
                 input_schema=self._schema(
@@ -135,6 +186,21 @@ class DirectGitHubToolClient:
             return self._get_json(
                 f"/repos/{self.config.owner}/{self.config.repo}/commits",
                 self._pick(arguments, per_page=10),
+            )
+        if name == "list_contributors":
+            return self._get_json(
+                f"/repos/{self.config.owner}/{self.config.repo}/contributors",
+                self._pick(arguments, per_page=20),
+            )
+        if name == "list_collaborators":
+            return self._get_json(
+                f"/repos/{self.config.owner}/{self.config.repo}/collaborators",
+                self._pick(arguments, per_page=20),
+            )
+        if name == "list_organization_members":
+            return self._get_json(
+                f"/orgs/{self.config.owner}/members",
+                self._pick(arguments, per_page=20),
             )
         if name == "list_workflow_runs":
             return self._get_json(
@@ -218,6 +284,11 @@ class DirectGitHubToolClient:
             "run_number",
             "run_started_at",
             "message",
+            "login",
+            "type",
+            "contributions",
+            "permissions",
+            "role_name",
         }
         compacted: dict[str, Any] = {}
 
