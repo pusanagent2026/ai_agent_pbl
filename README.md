@@ -82,15 +82,31 @@ UI에서 `Save tasks to Notion`을 켜면 AI가 구체적인 할 일을 `create_
 
 ```text
 src/github_ai_agent/
-  agent.py             # LLM tool-selection loop
+  agent.py             # 범용 LLM tool-selection 루프 (system_prompt 주입 가능)
   cli.py               # terminal interface
   web.py               # web UI server
   github_api_client.py # GitHub REST API tool backend
   notion_client.py     # Notion task creation tool backend
   tool_client.py       # combines multiple tool clients
   mcp_client.py        # MCP backend for later
-  prompts.py           # system prompt
+  prompts.py           # GitHub 도메인 system prompt
+
+  orchestrator/
+    agent.py           # OrchestratorAgent — 질문을 보고 도메인에 위임
+    domains.py         # 도메인 등록 지점 (build_<domain>_domain_agent)
+    prompts.py         # 오케스트레이터 system prompt
 ```
+
+`cli.py`/`web.py`는 이제 도메인 agent를 직접 부르지 않고 `OrchestratorAgent`를 거칩니다.
+
+### 새 도메인(코드 리뷰어, 회의록, 캘린더 등) 추가하는 법
+
+1. 자기 도메인의 tool/agent 로직은 자기 모듈에서 구현 (`orchestrator/domains.py`의 기존 항목은 건드리지 않음)
+2. `build_<domain>_domain_agent() -> DomainAgent`를 하나 만들어서 `orchestrator/domains.py`에 추가
+   - `DomainAgent`는 `name`, `description`, `async def run(question: str) -> str`만 있으면 됨
+3. `cli.py`/`web.py`에서 `OrchestratorAgent(domains=[...])` 리스트에 한 줄 추가
+
+오케스트레이터는 각 도메인의 내부 tool/프롬프트/backend를 몰라도 되고, 도메인도 오케스트레이터 내부를 몰라도 됩니다 — `DomainAgent.run(question)` 하나가 유일한 접점입니다.
 
 ## 핵심 확인 포인트
 

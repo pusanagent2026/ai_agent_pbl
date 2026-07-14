@@ -10,11 +10,12 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from github_ai_agent.agent import GitHubToolChoosingAgent
-from github_ai_agent.github_api_client import DirectGitHubToolClient
-from github_ai_agent.mcp_client import GitHubMcpClient
 from github_ai_agent.notion_client import NotionToolClient
-from github_ai_agent.tool_client import CombinedToolClient
+from github_ai_agent.orchestrator.agent import OrchestratorAgent
+from github_ai_agent.orchestrator.domains import (
+    build_github_domain_agent,
+    build_notion_domain_agent,
+)
 
 
 HTML = r"""<!doctype html>
@@ -480,23 +481,17 @@ class AppHandler(BaseHTTPRequestHandler):
 
 
 async def run_agent(question: str, save_to_notion: bool):
-    backend = os.environ.get("GITHUB_TOOL_BACKEND", "github-api")
-    agent = GitHubToolChoosingAgent()
+    github_domain = build_github_domain_agent()
+    notion_domain = build_notion_domain_agent()
+    orchestrator = OrchestratorAgent(domains=[github_domain, notion_domain])
 
-    if backend == "mcp":
-        github_client = GitHubMcpClient()
-    else:
-        github_client = DirectGitHubToolClient()
-
-    tool_client = CombinedToolClient([github_client, NotionToolClient()])
     if save_to_notion:
         question += (
             "\n\nNotion auto-save is enabled. If you identify concrete tasks, "
             "create them in Notion using create_notion_task."
         )
 
-    async with tool_client as tools:
-        return await agent.run(question, tools)
+    return await orchestrator.run(question)
 
 
 def main() -> None:

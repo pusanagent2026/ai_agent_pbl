@@ -7,11 +7,11 @@ import os
 
 from dotenv import load_dotenv
 
-from github_ai_agent.agent import GitHubToolChoosingAgent
-from github_ai_agent.github_api_client import DirectGitHubToolClient
-from github_ai_agent.mcp_client import GitHubMcpClient
-from github_ai_agent.notion_client import NotionToolClient
-from github_ai_agent.tool_client import CombinedToolClient
+from github_ai_agent.orchestrator.agent import OrchestratorAgent
+from github_ai_agent.orchestrator.domains import (
+    build_github_domain_agent,
+    build_notion_domain_agent,
+)
 
 
 async def async_main() -> None:
@@ -42,18 +42,17 @@ async def async_main() -> None:
     )
     args = parser.parse_args()
 
-    agent = GitHubToolChoosingAgent(
-        model=args.model,
+    github_domain = build_github_domain_agent(
         owner=args.owner,
         repo=args.repo,
+        backend=args.backend,
+    )
+    notion_domain = build_notion_domain_agent()
+    orchestrator = OrchestratorAgent(
+        domains=[github_domain, notion_domain],
+        model=args.model,
     )
 
-    if args.backend == "mcp":
-        github_client = GitHubMcpClient()
-    else:
-        github_client = DirectGitHubToolClient(owner=args.owner, repo=args.repo)
-
-    tool_client = CombinedToolClient([github_client, NotionToolClient()])
     question = args.question
     if args.save_to_notion:
         question += (
@@ -61,11 +60,10 @@ async def async_main() -> None:
             "create them in Notion using the available Notion task tool."
         )
 
-    async with tool_client as github_tools:
-        result = await agent.run(question, github_tools)
+    result = await orchestrator.run(question)
 
     if args.debug:
-        print(f"\n[Selected GitHub tools: {args.backend}]")
+        print(f"\n[Orchestrator delegated tools: {args.backend}]")
         print(json.dumps(result.selected_tools, ensure_ascii=False, indent=2))
         print("\n[Answer]")
 
