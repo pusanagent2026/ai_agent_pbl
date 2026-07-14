@@ -7,6 +7,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+from github_ai_agent.github_app_auth import resolve_default_repository
 from github_ai_agent.mcp_client import GitHubMcpClient, McpTool
 from github_ai_agent.prompts import SYSTEM_PROMPT
 
@@ -25,12 +26,15 @@ class GitHubToolChoosingAgent:
         owner: str | None = None,
         repo: str | None = None,
         max_tool_rounds: int = 6,
+        system_prompt: str | None = None,
     ) -> None:
         self.client = AsyncOpenAI()
         self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
-        self.owner = owner or os.environ.get("GITHUB_OWNER", "")
-        self.repo = repo or os.environ.get("GITHUB_REPO", "")
+        default_owner, default_repo = resolve_default_repository()
+        self.owner = owner or default_owner
+        self.repo = repo or default_repo
         self.max_tool_rounds = max_tool_rounds
+        self.system_prompt = system_prompt or SYSTEM_PROMPT
 
     async def run(self, question: str, mcp: GitHubMcpClient) -> AgentResult:
         mcp_tools = await mcp.list_tools()
@@ -39,7 +43,7 @@ class GitHubToolChoosingAgent:
         openai_tools = [self._to_openai_tool(tool) for tool in mcp_tools]
 
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": self.system_prompt},
             {
                 "role": "user",
                 "content": self._build_user_message(question),
@@ -97,7 +101,7 @@ class GitHubToolChoosingAgent:
                     "role": "user",
                     "content": (
                         "도구 호출 횟수 한도에 도달했습니다. 지금까지 확인한 "
-                        "GitHub MCP 결과만 바탕으로 최종 답변을 작성하세요."
+                        "결과만 바탕으로 최종 답변을 작성하세요."
                     ),
                 },
             ],
@@ -133,7 +137,7 @@ class GitHubToolChoosingAgent:
             "type": "function",
             "function": {
                 "name": self._safe_tool_name(tool.name),
-                "description": tool.description or f"Call GitHub MCP tool {tool.name}.",
+                "description": tool.description or f"Call tool {tool.name}.",
                 "parameters": schema,
             },
         }

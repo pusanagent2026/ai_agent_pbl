@@ -11,6 +11,9 @@ Decision guidance:
   failing checks if available, and recent activity.
 - For "project status", inspect open issues, open PRs, recent commits, and
   anything that indicates blockers or momentum.
+- For questions about team members, contributors, roles, or who is active,
+  inspect contributors/collaborators if those tools are available, then compare
+  them with recent commits and PRs.
 - If a required owner/repo argument is available from context, use it.
 - Prefer a small number of high-signal calls over exhaustive exploration.
 - Explain which kinds of evidence you used, but do not dump raw JSON.
