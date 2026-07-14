@@ -17,13 +17,8 @@ from dotenv import load_dotenv
 from github_ai_agent.agent import GitHubToolChoosingAgent
 from github_ai_agent.github_app_auth import GitHubAppTokenProvider, resolve_default_repository
 from github_ai_agent.google_calendar_client import GoogleCalendarToolClient
+from github_ai_agent.mcp_client import GitHubMcpClient
 from github_ai_agent.notion_client import NotionToolClient
-from github_ai_agent.orchestrator.domains import (
-    analyze_tasks,
-    create_calendar_events,
-    create_notion_tasks,
-    load_config_members,
-)
 
 SESSIONS: dict[str, dict[str, Any]] = {}
 OAUTH_STATES: dict[str, str] = {}
