@@ -30,17 +30,23 @@ class GoogleCalendarConfig:
 
 
 class GoogleCalendarToolClient:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        mcp_auth_token: str | None = None,
+        calendar_id: str | None = None,
+    ) -> None:
         self.config = GoogleCalendarConfig(
             backend=os.environ.get("GOOGLE_CALENDAR_BACKEND", "api"),
-            calendar_id=os.environ.get("GOOGLE_CALENDAR_ID", ""),
+            calendar_id=calendar_id or os.environ.get("GOOGLE_CALENDAR_ID", ""),
             timezone=os.environ.get("GOOGLE_CALENDAR_TIMEZONE", "Asia/Seoul"),
             service_account_file=os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE", ""),
             service_account_json=os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", ""),
             mcp_command=os.environ.get("CALENDAR_MCP_COMMAND", ""),
             mcp_url=os.environ.get("CALENDAR_MCP_URL", ""),
             mcp_auth_token=(
-                os.environ.get("CALENDAR_MCP_AUTH_TOKEN", "")
+                mcp_auth_token
+                or os.environ.get("CALENDAR_MCP_AUTH_TOKEN", "")
                 or os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN", "")
             ),
             mcp_create_event_tool=os.environ.get("CALENDAR_MCP_CREATE_EVENT_TOOL", ""),
@@ -79,12 +85,16 @@ class GoogleCalendarToolClient:
             parts = shlex.split(self.config.mcp_command, posix=os.name != "nt")
             if not parts:
                 raise ValueError("CALENDAR_MCP_COMMAND is empty.")
+            env = os.environ.copy()
+            command_dir = os.path.dirname(parts[0])
+            if command_dir and os.path.basename(parts[0]).lower() in {"docker", "docker.exe"}:
+                env["PATH"] = command_dir + os.pathsep + env.get("PATH", "")
             read_stream, write_stream = await self._stack.enter_async_context(
                 stdio_client(
                     StdioServerParameters(
                         command=parts[0],
                         args=parts[1:],
-                        env=os.environ.copy(),
+                        env=env,
                     )
                 )
             )
@@ -118,6 +128,10 @@ class GoogleCalendarToolClient:
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
         if self.config.backend != "mcp":
             return await self._call_api_tool(name, arguments)
+        if not self.enabled:
+            raise ValueError(
+                "Calendar MCP is enabled, but CALENDAR_MCP_URL or CALENDAR_MCP_COMMAND is required."
+            )
         if self._session is None:
             raise RuntimeError("Calendar MCP client is not connected.")
         tools = self._tools or await self.list_tools()

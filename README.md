@@ -98,15 +98,26 @@ NOTION_ASSIGNEE_PROPERTY=담당자
 ## Google Calendar API 설정
 
 ```env
-GOOGLE_CALENDAR_BACKEND=api
+GOOGLE_CALENDAR_BACKEND=mcp
+CALENDAR_MCP_URL=https://calendarmcp.googleapis.com/mcp/v1
+
+GOOGLE_OAUTH_CLIENT_ID=your-google-oauth-client-id
+GOOGLE_OAUTH_CLIENT_SECRET=your-google-oauth-client-secret
 GOOGLE_CALENDAR_ID=your-calendar-id
-GOOGLE_SERVICE_ACCOUNT_FILE=C:\secure-path\google-service-account.json
 GOOGLE_CALENDAR_TIMEZONE=Asia/Seoul
 ```
 
 Calendar 등록은 작업의 `due` 날짜를 all-day 이벤트로 생성합니다. `due`는 사용자가 입력한 프로젝트 전체 마감일 안에서 AI가 자동 생성합니다.
 
 ## 실행
+
+Google Calendar는 사용자에게 API 키나 토큰을 직접 입력시키지 않습니다. 서비스 운영자가 Google OAuth Client ID/Secret을 서버 `.env`에 설정하고, 사용자는 UI의 `Google Calendar 연결` 버튼으로 로그인/권한 승인을 진행합니다.
+
+Google OAuth 승인된 리디렉션 URI에는 아래 주소를 등록합니다.
+
+```text
+http://127.0.0.1:8787/auth/google/callback
+```
 
 ```powershell
 cd "C:\ai_agent_pbl2"

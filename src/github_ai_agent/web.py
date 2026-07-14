@@ -148,6 +148,7 @@ HTML = r"""<!doctype html>
         <div class="connect-row">
           <a class="link-button" id="connectGithub" href="/auth/github">GitHub 연결</a>
           <a class="link-button" id="installGithub" href="/auth/github/install" hidden>앱 설치</a>
+          <a class="link-button" id="connectGoogle" href="/auth/google">Google Calendar 연결</a>
         </div>
         <div class="chips">
           <span class="chip" id="backend">backend</span>
@@ -215,6 +216,7 @@ HTML = r"""<!doctype html>
     const repoSelect = document.querySelector("#repoSelect");
     const connectGithub = document.querySelector("#connectGithub");
     const installGithub = document.querySelector("#installGithub");
+    const connectGoogle = document.querySelector("#connectGoogle");
 
     let proposedTasks = [];
     let notionEnabled = false;
@@ -234,6 +236,7 @@ HTML = r"""<!doctype html>
       selectedRepository = readSavedRepository(config);
       renderRepositorySelect(config.repositories || []);
       connectGithub.textContent = config.github_user ? `@${config.github_user}` : "GitHub 연결";
+      connectGoogle.textContent = config.google_user ? `Calendar: ${config.google_user}` : "Google Calendar 연결";
       installGithub.hidden = Boolean((config.repositories || []).length);
       document.querySelector("#backend").textContent = config.backend;
       document.querySelector("#model").textContent = config.model;
@@ -513,6 +516,12 @@ class AppHandler(BaseHTTPRequestHandler):
         if parsed_url.path == "/auth/github/setup":
             self._handle_github_setup(parsed_url.query)
             return
+        if parsed_url.path == "/auth/google":
+            self._redirect_to_google_login()
+            return
+        if parsed_url.path == "/auth/google/callback":
+            self._handle_google_callback(parsed_url.query)
+            return
         if parsed_url.path == "/api/config":
             notion = NotionToolClient()
             calendar = GoogleCalendarToolClient()
@@ -526,10 +535,11 @@ class AppHandler(BaseHTTPRequestHandler):
                     "installation_id": installation_id,
                     "repositories": repositories,
                     "github_user": session.get("github_login", ""),
+                    "google_user": session.get("google_email", ""),
                     "model": os.environ.get("OPENAI_MODEL", "gpt-4.1-mini"),
                     "backend": "github-mcp",
                     "notion_enabled": notion.enabled,
-                    "calendar_enabled": calendar.enabled,
+                    "calendar_enabled": _calendar_enabled_for_session(calendar, session),
                     "calendar_timezone": calendar.config.timezone,
                     "assignee_property": notion.config.assignee_property,
                     **_load_config_members(owner, repo, installation_id),
@@ -603,7 +613,12 @@ class AppHandler(BaseHTTPRequestHandler):
             if not isinstance(tasks, list) or not tasks:
                 self._send_json({"error": "tasks are required"}, HTTPStatus.BAD_REQUEST)
                 return
-            result = asyncio.run(create_calendar_events(tasks))
+            result = asyncio.run(
+                create_calendar_events(
+                    tasks,
+                    google_access_token=str(self._session().get("google_access_token") or ""),
+                )
+            )
             self._send_json(result)
         except Exception as error:
             self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -662,6 +677,55 @@ class AppHandler(BaseHTTPRequestHandler):
         session_id = self._session_id()
         if installation_id:
             SESSIONS.setdefault(session_id, {})["installation_id"] = installation_id
+        self._redirect("/", session_id)
+
+    def _redirect_to_google_login(self) -> None:
+        client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+        if not client_id:
+            self._send_json(
+                {"error": "GOOGLE_OAUTH_CLIENT_ID is required for Google Calendar login."},
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+            return
+        session_id = self._session_id()
+        state = secrets.token_urlsafe(24)
+        OAUTH_STATES[state] = session_id
+        params = urlencode(
+            {
+                "client_id": client_id,
+                "redirect_uri": _base_url() + "/auth/google/callback",
+                "response_type": "code",
+                "state": state,
+                "scope": (
+                    "https://www.googleapis.com/auth/calendar.events "
+                    "https://www.googleapis.com/auth/userinfo.email"
+                ),
+                "access_type": "offline",
+                "prompt": "consent",
+            }
+        )
+        self._redirect(f"https://accounts.google.com/o/oauth2/v2/auth?{params}", session_id)
+
+    def _handle_google_callback(self, query_string: str) -> None:
+        query = parse_qs(query_string)
+        code = (query.get("code") or [""])[0]
+        state = (query.get("state") or [""])[0]
+        session_id = OAUTH_STATES.pop(state, "")
+        if not code or not session_id:
+            self._send_json({"error": "Invalid Google OAuth callback."}, HTTPStatus.BAD_REQUEST)
+            return
+
+        token_payload = _exchange_google_code(code)
+        access_token = str(token_payload.get("access_token") or "")
+        if not access_token:
+            self._send_json({"error": "Google OAuth did not return access_token."}, HTTPStatus.BAD_REQUEST)
+            return
+        user = _google_get_userinfo(access_token)
+        session = SESSIONS.setdefault(session_id, {})
+        session["google_access_token"] = access_token
+        if token_payload.get("refresh_token"):
+            session["google_refresh_token"] = str(token_payload.get("refresh_token"))
+        session["google_email"] = str(user.get("email") or "")
         self._redirect("/", session_id)
 
     def _session_id(self) -> str:
@@ -758,8 +822,12 @@ async def create_notion_tasks(tasks: list[Any]) -> dict[str, Any]:
     return {"created": created, "selected_tools": selected_tools}
 
 
-async def create_calendar_events(tasks: list[Any]) -> dict[str, Any]:
-    calendar = GoogleCalendarToolClient()
+async def create_calendar_events(
+    tasks: list[Any],
+    *,
+    google_access_token: str = "",
+) -> dict[str, Any]:
+    calendar = GoogleCalendarToolClient(mcp_auth_token=google_access_token or None)
     created: list[dict[str, Any]] = []
     selected_tools: list[dict[str, Any]] = []
     async with calendar:
@@ -876,6 +944,57 @@ def _github_get(path: str, token: str) -> dict[str, Any]:
     with urllib.request.urlopen(request, timeout=20) as response:
         payload = json.loads(response.read().decode("utf-8"))
     return payload if isinstance(payload, dict) else {}
+
+
+def _exchange_google_code(code: str) -> dict[str, Any]:
+    client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        raise ValueError("GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET are required.")
+    data = urlencode(
+        {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "code": code,
+            "redirect_uri": _base_url() + "/auth/google/callback",
+            "grant_type": "authorization_code",
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=data,
+        method="POST",
+        headers={"Accept": "application/json", "User-Agent": "github-ai-mcp-agent"},
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return payload if isinstance(payload, dict) else {}
+
+
+def _google_get_userinfo(access_token: str) -> dict[str, Any]:
+    request = urllib.request.Request(
+        "https://www.googleapis.com/oauth2/v2/userinfo",
+        method="GET",
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {access_token}",
+            "User-Agent": "github-ai-mcp-agent",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return payload if isinstance(payload, dict) else {}
+
+
+def _calendar_enabled_for_session(
+    calendar: GoogleCalendarToolClient,
+    session: dict[str, Any],
+) -> bool:
+    if not calendar.enabled:
+        return False
+    if calendar.config.backend != "mcp":
+        return calendar.enabled
+    return bool(session.get("google_access_token"))
 
 
 def _load_repositories(session: dict[str, Any] | None = None) -> list[dict[str, str]]:
