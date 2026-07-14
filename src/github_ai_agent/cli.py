@@ -3,15 +3,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 
 from dotenv import load_dotenv
 
-from github_ai_agent.orchestrator.agent import OrchestratorAgent
-from github_ai_agent.orchestrator.domains import (
-    build_github_domain_agent,
-    build_notion_domain_agent,
-)
+from github_ai_agent.agent import GitHubToolChoosingAgent
+from github_ai_agent.mcp_client import GitHubMcpClient
+from github_ai_agent.notion_client import NotionToolClient
+from github_ai_agent.tool_client import CombinedToolClient
 
 
 async def async_main() -> None:
@@ -28,12 +26,6 @@ async def async_main() -> None:
         "--debug",
         action="store_true",
         help="Print selected GitHub tools and arguments.",
-    )
-    parser.add_argument(
-        "--backend",
-        choices=["github-api", "mcp"],
-        default=os.environ.get("GITHUB_TOOL_BACKEND", "github-api"),
-        help="Use github-api now, or mcp later with Docker/local MCP server.",
     )
     parser.add_argument(
         "--save-to-notion",
@@ -53,6 +45,8 @@ async def async_main() -> None:
         model=args.model,
     )
 
+    github_client = GitHubMcpClient()
+    tool_client = CombinedToolClient([github_client, NotionToolClient()])
     question = args.question
     if args.save_to_notion:
         question += (
@@ -63,7 +57,7 @@ async def async_main() -> None:
     result = await orchestrator.run(question)
 
     if args.debug:
-        print(f"\n[Orchestrator delegated tools: {args.backend}]")
+        print("\n[Selected GitHub tools: mcp]")
         print(json.dumps(result.selected_tools, ensure_ascii=False, indent=2))
         print("\n[Answer]")
 

@@ -7,6 +7,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+from github_ai_agent.github_app_auth import resolve_default_repository
 from github_ai_agent.mcp_client import GitHubMcpClient, McpTool
 from github_ai_agent.prompts import SYSTEM_PROMPT
 
@@ -29,8 +30,9 @@ class GitHubToolChoosingAgent:
     ) -> None:
         self.client = AsyncOpenAI()
         self.model = model or os.environ.get("OPENAI_MODEL", "gpt-4.1-mini")
-        self.owner = owner or os.environ.get("GITHUB_OWNER", "")
-        self.repo = repo or os.environ.get("GITHUB_REPO", "")
+        default_owner, default_repo = resolve_default_repository()
+        self.owner = owner or default_owner
+        self.repo = repo or default_repo
         self.max_tool_rounds = max_tool_rounds
         self.system_prompt = system_prompt or SYSTEM_PROMPT
 
