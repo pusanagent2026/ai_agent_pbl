@@ -144,7 +144,7 @@ class GoogleCalendarToolClient:
             text = getattr(item, "text", None)
             chunks.append(text if text is not None else str(item))
         if result.isError:
-            return "MCP tool returned an error:\n" + "\n".join(chunks)
+            raise ValueError("MCP tool returned an error:\n" + "\n".join(chunks))
         return "\n".join(chunks) or json.dumps(
             {"created": True, "tool": tool.name, "arguments": mcp_arguments},
             ensure_ascii=False,
@@ -227,14 +227,18 @@ class GoogleCalendarToolClient:
         description = self._description(task)
         return {
             "calendar_id": self.config.calendar_id,
+            "calendarId": self.config.calendar_id,
             "summary": str(task.get("title") or "Task deadline"),
             "description": description,
             "start": f"{start.isoformat()}T09:00:00",
             "end": f"{start.isoformat()}T10:00:00",
+            "startTime": f"{start.isoformat()}T09:00:00",
+            "endTime": f"{start.isoformat()}T10:00:00",
             "start_date": start.isoformat(),
             "end_date": end.isoformat(),
             "timezone": self.config.timezone,
             "timeZone": self.config.timezone,
+            "allDay": False,
         }
 
     def _api_tool_schema(self) -> McpTool:

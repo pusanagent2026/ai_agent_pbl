@@ -592,7 +592,7 @@ class AppHandler(BaseHTTPRequestHandler):
             )
             self._send_json(result)
         except Exception as error:
-            self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def _handle_approve_tasks(self) -> None:
         try:
@@ -604,7 +604,7 @@ class AppHandler(BaseHTTPRequestHandler):
             result = asyncio.run(create_notion_tasks(tasks))
             self._send_json(result)
         except Exception as error:
-            self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def _handle_approve_calendar_events(self) -> None:
         try:
@@ -621,7 +621,7 @@ class AppHandler(BaseHTTPRequestHandler):
             )
             self._send_json(result)
         except Exception as error:
-            self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def _redirect_to_github_login(self) -> None:
         client_id = os.environ.get("GITHUB_APP_CLIENT_ID", "").strip()
@@ -696,9 +696,10 @@ class AppHandler(BaseHTTPRequestHandler):
                 "redirect_uri": _base_url() + "/auth/google/callback",
                 "response_type": "code",
                 "state": state,
-                "scope": (
-                    "https://www.googleapis.com/auth/calendar.events "
-                    "https://www.googleapis.com/auth/userinfo.email"
+                "scope": os.environ.get(
+                    "GOOGLE_OAUTH_SCOPES",
+                    "https://www.googleapis.com/auth/calendar "
+                    "https://www.googleapis.com/auth/userinfo.email",
                 ),
                 "access_type": "offline",
                 "prompt": "consent",
@@ -837,6 +838,8 @@ async def create_calendar_events(
             try:
                 created.append(json.loads(raw))
             except json.JSONDecodeError:
+                if "error" in raw.lower() or "forbidden" in raw.lower():
+                    raise ValueError(raw)
                 created.append({"created": True, "raw": raw})
     return {"created": created, "selected_tools": selected_tools}
 
@@ -995,6 +998,13 @@ def _calendar_enabled_for_session(
     if calendar.config.backend != "mcp":
         return calendar.enabled
     return bool(session.get("google_access_token"))
+
+
+def _friendly_error(error: BaseException) -> str:
+    if isinstance(error, BaseExceptionGroup):
+        parts = [_friendly_error(item) for item in error.exceptions]
+        return "; ".join(part for part in parts if part) or str(error)
+    return str(error)
 
 
 def _load_repositories(session: dict[str, Any] | None = None) -> list[dict[str, str]]:
