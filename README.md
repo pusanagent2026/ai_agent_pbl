@@ -73,6 +73,8 @@ GITHUB_MCP_COMMAND=C:\Progra~1\Docker\Docker\resources\bin\docker.exe run -i --r
 
 따라서 서비스 사용자는 GitHub PAT를 직접 입력하지 않아도 됩니다.
 
+`GITHUB_OWNER`/`GITHUB_REPO`/`GITHUB_APP_INSTALLATION_ID`는 CLI(`github-ai-agent`)와 GitHub App 자체 인증(`GITHUB_APP_ID`, private key)에 쓰이는 서버 전역 기본값입니다. 웹 UI는 브라우저 세션이 GitHub 로그인이나 앱 설치로 직접 연결한 저장소만 사용하며, 이 env 기본값으로 조용히 대체되지 않습니다 — 로그아웃하면 세션의 저장소 연결도 함께 사라집니다.
+
 ## OpenAI 설정
 
 ```env
@@ -108,6 +110,23 @@ GOOGLE_CALENDAR_TIMEZONE=Asia/Seoul
 ```
 
 Calendar 등록은 작업의 `due` 날짜를 all-day 이벤트로 생성합니다. `due`는 사용자가 입력한 프로젝트 전체 마감일 안에서 AI가 자동 생성합니다.
+
+## 웹 UI 세션 저장소 설정
+
+웹 UI의 브라우저 세션(GitHub/Google 로그인 토큰, 앱 설치 installation_id)은 SQLite(`session_store_schema.sql`)에 저장되며, 토큰 컬럼은 Fernet으로 암호화합니다.
+
+```env
+SESSION_ENC_KEY=your-fernet-key
+SESSION_DB_PATH=sessions.db
+```
+
+`SESSION_ENC_KEY`는 필수이며, 없으면 서버가 세션을 저장하려는 시점에 즉시 에러를 냅니다. 아래 명령으로 생성합니다.
+
+```powershell
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+`SESSION_DB_PATH`는 선택 항목이며 기본값은 프로젝트 루트의 `sessions.db`입니다.
 
 ## 실행
 

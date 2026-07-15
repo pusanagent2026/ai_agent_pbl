@@ -16,12 +16,12 @@ from dotenv import load_dotenv
 
 from github_ai_agent import code_review
 from github_ai_agent.agent import GitHubToolChoosingAgent
-from github_ai_agent.github_app_auth import GitHubAppTokenProvider, resolve_default_repository
+from github_ai_agent.github_app_auth import GitHubAppTokenProvider
 from github_ai_agent.google_calendar_client import GoogleCalendarToolClient
 from github_ai_agent.mcp_client import GitHubMcpClient
 from github_ai_agent.notion_client import NotionToolClient
+from github_ai_agent import session_store
 
-SESSIONS: dict[str, dict[str, Any]] = {}
 OAUTH_STATES: dict[str, str] = {}
 
 HTML = r"""<!doctype html>
@@ -66,8 +66,11 @@ HTML = r"""<!doctype html>
     .repo { padding: 14px; margin: 18px 0; }
     .repo strong { display: block; overflow-wrap: anywhere; }
     .repo select { width: 100%; margin-top: 8px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); }
+    .repo-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .connect-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
     .link-button { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--accent); border-radius: 8px; padding: 8px 10px; color: #fff; background: var(--accent); text-decoration: none; font-weight: 700; }
+    .logout-button { border-color: #dc2626; background: #dc2626; color: #fff; padding: 6px 10px; font-size: 12px; }
+    .logout-button:hover { background: #b91c1c; }
     .chips, .task-meta, .member-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
     .chip, .tag {
       border-radius: 999px;
@@ -178,7 +181,10 @@ HTML = r"""<!doctype html>
       <p class="muted">GitHub MCP/API 기록에서 팀원과 작업 성향을 읽고, 승인된 작업만 Notion과 Google Calendar에 등록합니다.</p>
 
       <div class="repo">
-        <span class="muted">Repository</span>
+        <div class="repo-head">
+          <span class="muted">Repository</span>
+          <a class="link-button logout-button" id="logoutButton" href="/auth/logout">로그아웃</a>
+        </div>
         <strong id="repo">loading...</strong>
         <select id="repoSelect" hidden></select>
         <div class="connect-row">
@@ -300,6 +306,7 @@ HTML = r"""<!doctype html>
     const connectGithub = document.querySelector("#connectGithub");
     const installGithub = document.querySelector("#installGithub");
     const connectGoogle = document.querySelector("#connectGoogle");
+    const logoutButton = document.querySelector("#logoutButton");
     const googleCalendarLink = document.querySelector("#googleCalendarLink");
     const calendarEvents = document.querySelector("#calendarEvents");
     const calendarListView = document.querySelector("#calendarListView");
@@ -955,6 +962,11 @@ HTML = r"""<!doctype html>
     analyze.addEventListener("click", analyzeGithub);
     approveNotion.addEventListener("click", () => postSelectedTasks("/api/approve-tasks", "Saving to Notion...", "Notion 등록 완료"));
     approveCalendar.addEventListener("click", () => postSelectedTasks("/api/approve-calendar-events", "Saving to Calendar...", "Calendar 등록 완료"));
+    logoutButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      localStorage.removeItem("selectedRepository");
+      window.location.href = logoutButton.href;
+    });
     calendarListView.addEventListener("click", () => {
       calendarView = "list";
       renderCalendarView();
@@ -1003,6 +1015,9 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if parsed_url.path == "/auth/google/callback":
             self._handle_google_callback(parsed_url.query)
+            return
+        if parsed_url.path == "/auth/logout":
+            self._handle_logout()
             return
         if parsed_url.path == "/api/config":
             notion = NotionToolClient()
@@ -1252,7 +1267,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
         token = _exchange_github_code(code)
         user = _github_get("/user", token)
-        session = SESSIONS.setdefault(session_id, {})
+        session = session_store.get_or_create(session_id)
         session["github_access_token"] = token
         session["github_login"] = str(user.get("login") or "")
         self._redirect("/", session_id)
@@ -1273,7 +1288,7 @@ class AppHandler(BaseHTTPRequestHandler):
         installation_id = (query.get("installation_id") or [""])[0].strip()
         session_id = self._session_id()
         if installation_id:
-            SESSIONS.setdefault(session_id, {})["installation_id"] = installation_id
+            session_store.get_or_create(session_id)["installation_id"] = installation_id
         self._redirect("/", session_id)
 
     def _redirect_to_google_login(self) -> None:
@@ -1325,11 +1340,16 @@ class AppHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Google OAuth did not return access_token."}, HTTPStatus.BAD_REQUEST)
             return
         user = _google_get_userinfo(access_token)
-        session = SESSIONS.setdefault(session_id, {})
+        session = session_store.get_or_create(session_id)
         session["google_access_token"] = access_token
         if token_payload.get("refresh_token"):
             session["google_refresh_token"] = str(token_payload.get("refresh_token"))
         session["google_email"] = str(user.get("email") or "")
+        self._redirect("/", session_id)
+
+    def _handle_logout(self) -> None:
+        session_id = self._session_id()
+        session_store.clear(session_id)
         self._redirect("/", session_id)
 
     def _session_id(self) -> str:
@@ -1337,14 +1357,11 @@ class AppHandler(BaseHTTPRequestHandler):
         for part in cookies.split(";"):
             name, _, value = part.strip().partition("=")
             if name == "github_ai_agent_session" and value:
-                SESSIONS.setdefault(value, {})
                 return value
-        session_id = secrets.token_urlsafe(24)
-        SESSIONS.setdefault(session_id, {})
-        return session_id
+        return secrets.token_urlsafe(24)
 
-    def _session(self) -> dict[str, Any]:
-        return SESSIONS.setdefault(self._session_id(), {})
+    def _session(self) -> session_store.SessionProxy:
+        return session_store.get_or_create(self._session_id())
 
     def _cookie(self, cookie_name: str) -> str:
         cookies = self.headers.get("Cookie", "")
@@ -1634,11 +1651,13 @@ def _load_repositories(session: dict[str, Any] | None = None) -> list[dict[str, 
     if user_token:
         return _load_user_installation_repositories(user_token)
 
-    provider = GitHubAppTokenProvider()
+    installation_id = str(session.get("installation_id") or "")
+    if not installation_id:
+        return []
+    provider = GitHubAppTokenProvider(installation_id)
     if not provider.enabled:
         return []
     repositories = provider.list_installation_repositories()
-    installation_id = provider.config.installation_id
     return _format_repositories(repositories, installation_id)
 
 
@@ -1684,11 +1703,10 @@ def _format_repositories(
 
 
 def _select_default_repository(repositories: list[dict[str, str]]) -> tuple[str, str, str]:
-    if repositories:
-        first = repositories[0]
-        return first.get("owner", ""), first.get("repo", ""), first.get("installation_id", "")
-    owner, repo = resolve_default_repository()
-    return owner, repo, os.environ.get("GITHUB_APP_INSTALLATION_ID", "")
+    if not repositories:
+        return "", "", ""
+    first = repositories[0]
+    return first.get("owner", ""), first.get("repo", ""), first.get("installation_id", "")
 
 
 def _load_config_members(owner: str, repo: str, installation_id: str = "") -> dict[str, Any]:
