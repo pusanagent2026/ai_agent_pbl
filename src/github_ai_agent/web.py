@@ -245,8 +245,6 @@ HTML = r"""<!doctype html>
           <section>
             <h2>AI Analysis</h2>
             <div class="answer" id="answer">아직 분석 결과가 없습니다.</div>
-            <h2 style="margin-top:18px;">Selected Tools</h2>
-            <div id="tools" class="muted">AI가 GitHub 분석에 사용한 tool이 여기에 표시됩니다.</div>
           </section>
           <section>
             <h2>Proposed Tasks</h2>
