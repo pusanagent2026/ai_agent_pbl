@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import urllib.error
+import urllib.request
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.streamable_http import streamablehttp_client
@@ -144,10 +147,23 @@ class GoogleCalendarToolClient:
             text = getattr(item, "text", None)
             chunks.append(text if text is not None else str(item))
         if result.isError:
-            raise ValueError("MCP tool returned an error:\n" + "\n".join(chunks))
+            message = "\n".join(chunks)
+            if self.config.mcp_auth_token and self._is_permission_error(message):
+                return await self._call_oauth_calendar_api_tool(name, arguments)
+            raise ValueError("MCP tool returned an error:\n" + message)
         return "\n".join(chunks) or json.dumps(
             {"created": True, "tool": tool.name, "arguments": mcp_arguments},
             ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _is_permission_error(message: str) -> bool:
+        lowered = message.lower()
+        return (
+            "permission" in lowered
+            or "forbidden" in lowered
+            or "403" in lowered
+            or "access_denied" in lowered
         )
 
     def _pick_create_event_tool(self, tools: list[McpTool]) -> McpTool:
@@ -230,15 +246,15 @@ class GoogleCalendarToolClient:
             "calendarId": self.config.calendar_id,
             "summary": str(task.get("title") or "Task deadline"),
             "description": description,
-            "start": f"{start.isoformat()}T09:00:00",
-            "end": f"{start.isoformat()}T10:00:00",
-            "startTime": f"{start.isoformat()}T09:00:00",
-            "endTime": f"{start.isoformat()}T10:00:00",
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "startTime": start.isoformat(),
+            "endTime": end.isoformat(),
             "start_date": start.isoformat(),
             "end_date": end.isoformat(),
             "timezone": self.config.timezone,
             "timeZone": self.config.timezone,
-            "allDay": False,
+            "allDay": True,
         }
 
     def _api_tool_schema(self) -> McpTool:
@@ -280,6 +296,50 @@ class GoogleCalendarToolClient:
                 "title": arguments.get("title"),
                 "calendar_event_id": created.get("id"),
                 "html_link": created.get("htmlLink"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    async def _call_oauth_calendar_api_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        if name != "create_calendar_event":
+            raise ValueError(f"Unknown Google Calendar tool: {name}")
+        if not self.config.calendar_id:
+            raise ValueError("GOOGLE_CALENDAR_ID is required.")
+        if not self.config.mcp_auth_token:
+            raise ValueError("Google OAuth access token is required.")
+
+        event = self._build_api_event(arguments)
+        url = (
+            "https://www.googleapis.com/calendar/v3/calendars/"
+            f"{quote(self.config.calendar_id, safe='')}/events"
+        )
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(event).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self.config.mcp_auth_token}",
+                "Content-Type": "application/json; charset=utf-8",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                created = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            body = error.read().decode("utf-8", errors="replace")
+            raise ValueError(f"Google Calendar OAuth API error {error.code}: {body}") from error
+        except urllib.error.URLError as error:
+            raise ValueError(f"Google Calendar OAuth API error: {error.reason}") from error
+
+        return json.dumps(
+            {
+                "created": True,
+                "title": arguments.get("title"),
+                "calendar_event_id": created.get("id"),
+                "html_link": created.get("htmlLink"),
+                "backend": "google-calendar-api-fallback",
             },
             ensure_ascii=False,
             indent=2,

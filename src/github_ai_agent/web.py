@@ -969,10 +969,17 @@ class AppHandler(BaseHTTPRequestHandler):
             if not isinstance(tasks, list) or not tasks:
                 self._send_json({"error": "tasks are required"}, HTTPStatus.BAD_REQUEST)
                 return
+            google_access_token = str(self._session().get("google_access_token") or "")
+            if not google_access_token:
+                self._send_json(
+                    {"error": "Google Calendar 연결 후 다시 등록해 주세요."},
+                    HTTPStatus.UNAUTHORIZED,
+                )
+                return
             result = asyncio.run(
                 create_calendar_events(
                     tasks,
-                    google_access_token=str(self._session().get("google_access_token") or ""),
+                    google_access_token=google_access_token,
                 )
             )
             self._send_json(result)
@@ -1061,13 +1068,19 @@ class AppHandler(BaseHTTPRequestHandler):
                 "prompt": "consent",
             }
         )
-        self._redirect(f"https://accounts.google.com/o/oauth2/v2/auth?{params}", session_id)
+        self._redirect(
+            f"https://accounts.google.com/o/oauth2/v2/auth?{params}",
+            session_id,
+            extra_cookies={"google_oauth_state": state},
+        )
 
     def _handle_google_callback(self, query_string: str) -> None:
         query = parse_qs(query_string)
         code = (query.get("code") or [""])[0]
         state = (query.get("state") or [""])[0]
         session_id = OAUTH_STATES.pop(state, "")
+        if not session_id and state and self._cookie("google_oauth_state") == state:
+            session_id = self._session_id()
         if not code or not session_id:
             self._send_json({"error": "Invalid Google OAuth callback."}, HTTPStatus.BAD_REQUEST)
             return
@@ -1099,13 +1112,31 @@ class AppHandler(BaseHTTPRequestHandler):
     def _session(self) -> dict[str, Any]:
         return SESSIONS.setdefault(self._session_id(), {})
 
-    def _redirect(self, location: str, session_id: str | None = None) -> None:
+    def _cookie(self, cookie_name: str) -> str:
+        cookies = self.headers.get("Cookie", "")
+        for part in cookies.split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == cookie_name:
+                return value
+        return ""
+
+    def _redirect(
+        self,
+        location: str,
+        session_id: str | None = None,
+        extra_cookies: dict[str, str] | None = None,
+    ) -> None:
         self.send_response(HTTPStatus.FOUND)
         self.send_header("Location", location)
         if session_id:
             self.send_header(
                 "Set-Cookie",
                 f"github_ai_agent_session={session_id}; Path=/; HttpOnly; SameSite=Lax",
+            )
+        for name, value in (extra_cookies or {}).items():
+            self.send_header(
+                "Set-Cookie",
+                f"{name}={value}; Path=/; HttpOnly; SameSite=Lax",
             )
         self.end_headers()
 
