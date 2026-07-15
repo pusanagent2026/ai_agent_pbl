@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -344,6 +344,51 @@ class GoogleCalendarToolClient:
             ensure_ascii=False,
             indent=2,
         )
+
+    def list_upcoming_events(self, *, max_results: int = 8) -> list[dict[str, str]]:
+        if not self.config.calendar_id:
+            raise ValueError("GOOGLE_CALENDAR_ID is required.")
+        if not self.config.mcp_auth_token:
+            raise ValueError("Google OAuth access token is required.")
+
+        time_min = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        url = (
+            "https://www.googleapis.com/calendar/v3/calendars/"
+            f"{quote(self.config.calendar_id, safe='')}/events"
+            f"?singleEvents=true&orderBy=startTime&maxResults={max_results}&timeMin={quote(time_min, safe='')}"
+        )
+        request = urllib.request.Request(
+            url,
+            method="GET",
+            headers={
+                "Authorization": f"Bearer {self.config.mcp_auth_token}",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            body = error.read().decode("utf-8", errors="replace")
+            raise ValueError(f"Google Calendar list API error {error.code}: {body}") from error
+        except urllib.error.URLError as error:
+            raise ValueError(f"Google Calendar list API error: {error.reason}") from error
+
+        events: list[dict[str, str]] = []
+        for item in payload.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            start = item.get("start") if isinstance(item.get("start"), dict) else {}
+            end = item.get("end") if isinstance(item.get("end"), dict) else {}
+            events.append(
+                {
+                    "title": str(item.get("summary") or "(제목 없음)"),
+                    "start": str(start.get("date") or start.get("dateTime") or ""),
+                    "end": str(end.get("date") or end.get("dateTime") or ""),
+                    "html_link": str(item.get("htmlLink") or ""),
+                }
+            )
+        return events
 
     def _build_service(self) -> Any:
         try:
