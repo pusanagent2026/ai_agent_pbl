@@ -311,7 +311,6 @@ HTML = r"""<!doctype html>
     const approveNotion = document.querySelector("#approveNotion");
     const approveCalendar = document.querySelector("#approveCalendar");
     const answer = document.querySelector("#answer");
-    const tools = document.querySelector("#tools");
     const tasks = document.querySelector("#tasks");
     const status = document.querySelector("#status");
     const repoSelect = document.querySelector("#repoSelect");
@@ -369,6 +368,10 @@ HTML = r"""<!doctype html>
       const config = await response.json();
       selectedRepository = readSavedRepository(config);
       renderRepositorySelect(config.repositories || []);
+      if (!selectedRepository.owner || !selectedRepository.repo) {
+        status.textContent = "GitHub 연결 필요";
+        answer.innerHTML = "<span class='error'>GitHub 연결 후 저장소를 선택해야 분석을 시작할 수 있습니다.</span>";
+      }
       connectGithub.textContent = config.github_user ? `@${config.github_user}` : "GitHub 연결";
       connectGoogle.textContent = config.google_user ? `Calendar: ${config.google_user}` : "Google Calendar 연결";
       installGithub.hidden = Boolean((config.repositories || []).length);
@@ -966,6 +969,13 @@ HTML = r"""<!doctype html>
 
     async function analyzeGithub() {
       const text = question.value.trim();
+      if (!selectedRepository.owner || !selectedRepository.repo) {
+        status.textContent = "GitHub 연결 필요";
+        answer.innerHTML = "<span class='error'>먼저 GitHub에 연결하고 분석할 저장소를 선택해주세요.</span>";
+        tasks.innerHTML = "<span class='muted'>저장소가 선택되면 GitHub 기록을 분석할 수 있습니다.</span>";
+        connectGithub.focus();
+        return;
+      }
       if (!text) {
         question.focus();
         return;
@@ -975,7 +985,6 @@ HTML = r"""<!doctype html>
       approveCalendar.disabled = true;
       status.textContent = "Analyzing GitHub...";
       answer.textContent = "GitHub MCP/API 기록에서 팀원, 작업 성향, 마감일 후보를 분석하는 중입니다.";
-      tools.innerHTML = "<span class='muted'>Tool 선택 대기 중...</span>";
       tasks.innerHTML = "<span class='muted'>할 일 후보 생성 중...</span>";
 
       try {
@@ -1001,7 +1010,6 @@ HTML = r"""<!doctype html>
       } catch (error) {
         proposedTasks = [];
         answer.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
-        tools.innerHTML = "<span class='muted'>요청에 실패했습니다.</span>";
         tasks.innerHTML = "<span class='muted'>할 일 후보를 만들지 못했습니다.</span>";
         status.textContent = "Error";
       } finally {
