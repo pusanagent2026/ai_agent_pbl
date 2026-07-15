@@ -159,6 +159,7 @@ src/github_ai_agent/
   tool_client.py            # combines multiple tool clients
   mcp_client.py             # MCP backend for later
   prompts.py                # GitHub 도메인 system prompt
+<<<<<<< HEAD
   code_review.py            # 코드 리뷰 탭 도메인 로직
   readme_review.py          # README 갱신 탭 도메인 로직 (분석 + PR 생성)
   readme_updater.py         # README 갱신 여부 판단/재작성 LLM 로직 (scripts/update_readme.py와 공유)
@@ -167,19 +168,11 @@ src/github_ai_agent/
     agent.py                # OrchestratorAgent — 질문을 보고 도메인에 위임
     domains.py               # 도메인 로직 (build_<domain>_domain_agent, task 분석/승인 워크플로)
     prompts.py               # 오케스트레이터 system prompt
+=======
+>>>>>>> 2a1c1985d0f87104b616d9facf9e684a4710e80f
 ```
 
-`cli.py`는 도메인 agent를 직접 부르지 않고 `OrchestratorAgent`를 거쳐 github/notion 도메인에 위임합니다. `web.py`의 승인 플로우(작업 제안 → 승인 → Notion/Calendar 등록)는 구조화된 JSON을 다뤄야 해서 `orchestrator/domains.py`가 제공하는 `analyze_tasks`/`create_notion_tasks`/`create_calendar_events` 함수를 직접 호출합니다.
-
-### 새 도메인(코드 리뷰어, 회의록 등) 추가하는 법
-
-1. 자기 도메인의 tool/agent 로직은 자기 모듈에서 구현 (`orchestrator/domains.py`의 기존 항목은 건드리지 않음)
-2. `build_<domain>_domain_agent() -> DomainAgent`를 하나 만들어서 `orchestrator/domains.py`에 추가
-   - `DomainAgent`는 `name`, `description`, `async def run(question: str) -> str`만 있으면 됨
-3. `cli.py`에서 `OrchestratorAgent(domains=[...])` 리스트에 한 줄 추가
-   - 승인 플로우처럼 구조화된 결과(JSON)가 필요하면 `DomainAgent` 대신 `analyze_tasks`류의 별도 함수로 만들어 `web.py`에서 직접 호출
-
-오케스트레이터는 각 도메인의 내부 tool/프롬프트/backend를 몰라도 되고, 도메인도 오케스트레이터 내부를 몰라도 됩니다 — `DomainAgent.run(question)` 하나가 유일한 접점입니다.
+`cli.py`와 `web.py` 둘 다 도메인 tool client(GitHub/Notion/Calendar)를 직접 조합해서 `GitHubToolChoosingAgent`를 호출합니다. 별도 라우팅 계층(오케스트레이터) 없이, 어떤 tool을 쓸지는 `CombinedToolClient`에 넘긴 tool 목록과 (web.py의 경우) UI에서 사용자가 누른 승인 버튼으로 결정됩니다.
 
 ## README 갱신 원칙
 
