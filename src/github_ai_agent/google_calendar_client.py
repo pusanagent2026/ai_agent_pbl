@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import urllib.error
+import urllib.request
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.streamable_http import streamablehttp_client
@@ -30,17 +33,23 @@ class GoogleCalendarConfig:
 
 
 class GoogleCalendarToolClient:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        mcp_auth_token: str | None = None,
+        calendar_id: str | None = None,
+    ) -> None:
         self.config = GoogleCalendarConfig(
             backend=os.environ.get("GOOGLE_CALENDAR_BACKEND", "api"),
-            calendar_id=os.environ.get("GOOGLE_CALENDAR_ID", ""),
+            calendar_id=calendar_id or os.environ.get("GOOGLE_CALENDAR_ID", ""),
             timezone=os.environ.get("GOOGLE_CALENDAR_TIMEZONE", "Asia/Seoul"),
             service_account_file=os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE", ""),
             service_account_json=os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", ""),
             mcp_command=os.environ.get("CALENDAR_MCP_COMMAND", ""),
             mcp_url=os.environ.get("CALENDAR_MCP_URL", ""),
             mcp_auth_token=(
-                os.environ.get("CALENDAR_MCP_AUTH_TOKEN", "")
+                mcp_auth_token
+                or os.environ.get("CALENDAR_MCP_AUTH_TOKEN", "")
                 or os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN", "")
             ),
             mcp_create_event_tool=os.environ.get("CALENDAR_MCP_CREATE_EVENT_TOOL", ""),
@@ -79,12 +88,16 @@ class GoogleCalendarToolClient:
             parts = shlex.split(self.config.mcp_command, posix=os.name != "nt")
             if not parts:
                 raise ValueError("CALENDAR_MCP_COMMAND is empty.")
+            env = os.environ.copy()
+            command_dir = os.path.dirname(parts[0])
+            if command_dir and os.path.basename(parts[0]).lower() in {"docker", "docker.exe"}:
+                env["PATH"] = command_dir + os.pathsep + env.get("PATH", "")
             read_stream, write_stream = await self._stack.enter_async_context(
                 stdio_client(
                     StdioServerParameters(
                         command=parts[0],
                         args=parts[1:],
-                        env=os.environ.copy(),
+                        env=env,
                     )
                 )
             )
@@ -118,6 +131,10 @@ class GoogleCalendarToolClient:
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
         if self.config.backend != "mcp":
             return await self._call_api_tool(name, arguments)
+        if not self.enabled:
+            raise ValueError(
+                "Calendar MCP is enabled, but CALENDAR_MCP_URL or CALENDAR_MCP_COMMAND is required."
+            )
         if self._session is None:
             raise RuntimeError("Calendar MCP client is not connected.")
         tools = self._tools or await self.list_tools()
@@ -130,10 +147,23 @@ class GoogleCalendarToolClient:
             text = getattr(item, "text", None)
             chunks.append(text if text is not None else str(item))
         if result.isError:
-            return "MCP tool returned an error:\n" + "\n".join(chunks)
+            message = "\n".join(chunks)
+            if self.config.mcp_auth_token and self._is_permission_error(message):
+                return await self._call_oauth_calendar_api_tool(name, arguments)
+            raise ValueError("MCP tool returned an error:\n" + message)
         return "\n".join(chunks) or json.dumps(
             {"created": True, "tool": tool.name, "arguments": mcp_arguments},
             ensure_ascii=False,
+        )
+
+    @staticmethod
+    def _is_permission_error(message: str) -> bool:
+        lowered = message.lower()
+        return (
+            "permission" in lowered
+            or "forbidden" in lowered
+            or "403" in lowered
+            or "access_denied" in lowered
         )
 
     def _pick_create_event_tool(self, tools: list[McpTool]) -> McpTool:
@@ -213,14 +243,18 @@ class GoogleCalendarToolClient:
         description = self._description(task)
         return {
             "calendar_id": self.config.calendar_id,
+            "calendarId": self.config.calendar_id,
             "summary": str(task.get("title") or "Task deadline"),
             "description": description,
-            "start": f"{start.isoformat()}T09:00:00",
-            "end": f"{start.isoformat()}T10:00:00",
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "startTime": start.isoformat(),
+            "endTime": end.isoformat(),
             "start_date": start.isoformat(),
             "end_date": end.isoformat(),
             "timezone": self.config.timezone,
             "timeZone": self.config.timezone,
+            "allDay": True,
         }
 
     def _api_tool_schema(self) -> McpTool:
@@ -262,6 +296,50 @@ class GoogleCalendarToolClient:
                 "title": arguments.get("title"),
                 "calendar_event_id": created.get("id"),
                 "html_link": created.get("htmlLink"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+
+    async def _call_oauth_calendar_api_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        if name != "create_calendar_event":
+            raise ValueError(f"Unknown Google Calendar tool: {name}")
+        if not self.config.calendar_id:
+            raise ValueError("GOOGLE_CALENDAR_ID is required.")
+        if not self.config.mcp_auth_token:
+            raise ValueError("Google OAuth access token is required.")
+
+        event = self._build_api_event(arguments)
+        url = (
+            "https://www.googleapis.com/calendar/v3/calendars/"
+            f"{quote(self.config.calendar_id, safe='')}/events"
+        )
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(event).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self.config.mcp_auth_token}",
+                "Content-Type": "application/json; charset=utf-8",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                created = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            body = error.read().decode("utf-8", errors="replace")
+            raise ValueError(f"Google Calendar OAuth API error {error.code}: {body}") from error
+        except urllib.error.URLError as error:
+            raise ValueError(f"Google Calendar OAuth API error: {error.reason}") from error
+
+        return json.dumps(
+            {
+                "created": True,
+                "title": arguments.get("title"),
+                "calendar_event_id": created.get("id"),
+                "html_link": created.get("htmlLink"),
+                "backend": "google-calendar-api-fallback",
             },
             ensure_ascii=False,
             indent=2,
