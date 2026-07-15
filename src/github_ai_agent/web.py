@@ -52,7 +52,7 @@ HTML = r"""<!doctype html>
       font-size: 15px;
       line-height: 1.5;
     }
-    .shell { display: grid; grid-template-columns: 320px minmax(0, 1fr); min-height: 100vh; }
+    .shell { display: grid; grid-template-columns: 420px minmax(0, 1fr); min-height: 100vh; }
     aside { border-right: 1px solid var(--line); background: #eef3f6; padding: 24px; }
     main { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 18px; padding: 24px; }
     h1 { margin: 0 0 10px; font-size: 24px; line-height: 1.2; letter-spacing: 0; }
@@ -79,6 +79,25 @@ HTML = r"""<!doctype html>
     }
     .tag { background: #edf2f7; color: #334155; border: 0; }
     .members { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+    .calendar-panel { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+    .calendar-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .calendar-link { color: var(--accent-dark); font-weight: 700; text-decoration: none; font-size: 12px; }
+    .calendar-view-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+    .calendar-view-toggle button { padding: 7px 8px; font-size: 12px; font-weight: 700; }
+    .calendar-view-toggle button.active { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .calendar-events { display: grid; gap: 8px; margin-top: 10px; }
+    .calendar-event { display: grid; gap: 2px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #fbfcfe; text-decoration: none; color: var(--text); }
+    .calendar-event:hover { border-color: var(--accent); }
+    .calendar-event strong { font-size: 13px; line-height: 1.35; }
+    .calendar-event span { color: var(--muted); font-size: 12px; }
+    .mini-calendar { margin-top: 10px; }
+    .mini-calendar-title { font-size: 12px; font-weight: 800; color: var(--muted); margin-bottom: 8px; }
+    .mini-calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+    .mini-calendar-day-name { color: var(--muted); font-size: 10px; text-align: center; font-weight: 800; }
+    .mini-calendar-cell { min-height: 82px; border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 6px; overflow: hidden; }
+    .mini-calendar-cell.muted-cell { background: #f8fafc; color: #94a3b8; }
+    .mini-calendar-date { font-size: 12px; font-weight: 800; margin-bottom: 4px; }
+    .mini-calendar-item { display: block; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent-dark); font-size: 11px; line-height: 1.35; text-decoration: none; }
     .examples { display: grid; gap: 8px; margin-top: 12px; }
     label.field { display: grid; gap: 6px; color: var(--muted); }
     input[type="date"], textarea {
@@ -177,6 +196,17 @@ HTML = r"""<!doctype html>
           <span class="muted">GitHub IDs</span>
           <div class="member-list" id="members"><span class="chip">loading...</span></div>
         </div>
+        <div class="calendar-panel">
+          <div class="calendar-head">
+            <span class="muted">Google Calendar</span>
+            <a class="calendar-link" id="googleCalendarLink" href="https://calendar.google.com/calendar/u/0/r" target="_blank" rel="noreferrer">열기</a>
+          </div>
+          <div class="calendar-view-toggle">
+            <button class="active" id="calendarListView" type="button">목록</button>
+            <button id="calendarMonthView" type="button">달력</button>
+          </div>
+          <div class="calendar-events" id="calendarEvents"><span class="chip">연결 대기</span></div>
+        </div>
       </div>
 
       <h2>Examples</h2>
@@ -270,6 +300,10 @@ HTML = r"""<!doctype html>
     const connectGithub = document.querySelector("#connectGithub");
     const installGithub = document.querySelector("#installGithub");
     const connectGoogle = document.querySelector("#connectGoogle");
+    const googleCalendarLink = document.querySelector("#googleCalendarLink");
+    const calendarEvents = document.querySelector("#calendarEvents");
+    const calendarListView = document.querySelector("#calendarListView");
+    const calendarMonthView = document.querySelector("#calendarMonthView");
 
     const tabTaskPlanner = document.querySelector("#tabTaskPlanner");
     const tabCodeReview = document.querySelector("#tabCodeReview");
@@ -292,6 +326,8 @@ HTML = r"""<!doctype html>
     let currentBranch = "";
     let allFiles = [];
     let selectedFilePath = "";
+    let calendarView = "list";
+    let loadedCalendarEvents = [];
 
     document.querySelectorAll(".example").forEach((button) => {
       button.addEventListener("click", () => {
@@ -314,11 +350,179 @@ HTML = r"""<!doctype html>
       calendarEnabled = Boolean(config.calendar_enabled);
       document.querySelector("#notion").textContent = notionEnabled ? "notion on" : "notion off";
       document.querySelector("#calendar").textContent = calendarEnabled ? "calendar on" : "calendar off";
+      googleCalendarLink.href = calendarEnabled ? "https://calendar.google.com/calendar/u/0/r" : "/auth/google";
+      await loadCalendarEvents();
       renderMembers(config.members || [], config.member_warnings || []);
       if (selectedRepository.owner !== config.owner || selectedRepository.repo !== config.repo) {
         await loadMembers(selectedRepository.owner, selectedRepository.repo);
       }
       refreshApproveButtons();
+    }
+
+    async function loadCalendarEvents() {
+      if (!calendarEnabled) {
+        calendarEvents.innerHTML = "<span class='chip'>Google Calendar 연결 필요</span>";
+        return;
+      }
+      calendarEvents.innerHTML = "<span class='chip'>일정 불러오는 중...</span>";
+      try {
+        const response = await fetch("/api/calendar-events");
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Calendar request failed");
+        }
+        loadedCalendarEvents = payload.events || [];
+        renderCalendarView();
+      } catch (error) {
+        calendarEvents.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+      }
+    }
+
+    function renderCalendarView() {
+      calendarListView.classList.toggle("active", calendarView === "list");
+      calendarMonthView.classList.toggle("active", calendarView === "month");
+      if (calendarView === "month") {
+        renderCalendarMonth(loadedCalendarEvents);
+      } else {
+        renderCalendarEvents(loadedCalendarEvents);
+      }
+    }
+
+    function renderCalendarEvents(events) {
+      calendarEvents.innerHTML = "";
+      if (!events.length) {
+        calendarEvents.innerHTML = "<span class='chip'>다가오는 일정 없음</span>";
+        return;
+      }
+      events.forEach((event) => {
+        const item = document.createElement(event.html_link ? "a" : "div");
+        item.className = "calendar-event";
+        if (event.html_link) {
+          item.href = event.html_link;
+          item.target = "_blank";
+          item.rel = "noreferrer";
+        }
+        item.innerHTML = `
+          <strong>${escapeHtml(event.title || "(제목 없음)")}</strong>
+          <span>${escapeHtml(formatCalendarDate(event.start))}</span>
+        `;
+        calendarEvents.appendChild(item);
+      });
+    }
+
+    function renderCalendarMonth(events) {
+      calendarEvents.innerHTML = "";
+      if (!events.length) {
+        calendarEvents.innerHTML = "<span class='chip'>달력에 표시할 일정 없음</span>";
+        return;
+      }
+      const anchor = firstEventDate(events) || new Date();
+      const year = anchor.getFullYear();
+      const month = anchor.getMonth();
+      const first = new Date(year, month, 1);
+      const start = new Date(first);
+      start.setDate(first.getDate() - first.getDay());
+      const byDate = groupEventsByDate(events);
+      const wrapper = document.createElement("div");
+      wrapper.className = "mini-calendar";
+      wrapper.innerHTML = `
+        <div class="mini-calendar-title">${year}.${String(month + 1).padStart(2, "0")}</div>
+        <div class="mini-calendar-grid" id="miniCalendarGrid"></div>
+      `;
+      calendarEvents.appendChild(wrapper);
+      const grid = wrapper.querySelector("#miniCalendarGrid");
+      ["?", "?", "?", "?", "?", "?", "?"].forEach((day) => {
+        const label = document.createElement("div");
+        label.className = "mini-calendar-day-name";
+        label.textContent = day;
+        grid.appendChild(label);
+      });
+      for (let index = 0; index < 42; index += 1) {
+        const date = new Date(start);
+        date.setDate(start.getDate() + index);
+        const key = toDateKey(date);
+        const cell = document.createElement("div");
+        cell.className = `mini-calendar-cell${date.getMonth() === month ? "" : " muted-cell"}`;
+        cell.innerHTML = `<div class="mini-calendar-date">${date.getDate()}</div>`;
+        (byDate.get(key) || []).slice(0, 2).forEach((event) => {
+          const item = document.createElement(event.html_link ? "a" : "span");
+          item.className = "mini-calendar-item";
+          item.textContent = event.title || "(제목 없음)";
+          if (event.html_link) {
+            item.href = event.html_link;
+            item.target = "_blank";
+            item.rel = "noreferrer";
+          }
+          cell.appendChild(item);
+        });
+        const hiddenCount = Math.max((byDate.get(key) || []).length - 2, 0);
+        if (hiddenCount) {
+          const more = document.createElement("span");
+          more.className = "mini-calendar-item";
+          more.textContent = `+${hiddenCount}`;
+          cell.appendChild(more);
+        }
+        grid.appendChild(cell);
+      }
+    }
+
+    function groupEventsByDate(events) {
+      const grouped = new Map();
+      events.forEach((event) => {
+        const key = eventDateKey(event);
+        if (!key) {
+          return;
+        }
+        const items = grouped.get(key) || [];
+        items.push(event);
+        grouped.set(key, items);
+      });
+      return grouped;
+    }
+
+    function firstEventDate(events) {
+      for (const event of events) {
+        const key = eventDateKey(event);
+        if (key) {
+          return new Date(`${key}T00:00:00`);
+        }
+      }
+      return null;
+    }
+
+    function eventDateKey(event) {
+      const value = event.start || "";
+      if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        return value;
+      }
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) {
+        return "";
+      }
+      return toDateKey(parsed);
+    }
+
+    function toDateKey(date) {
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    }
+
+    function formatCalendarDate(value) {
+      if (!value) {
+        return "날짜 없음";
+      }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        return value;
+      }
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) {
+        return value;
+      }
+      return parsed.toLocaleString("ko-KR", {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
     }
 
     function readSavedRepository(config) {
@@ -751,6 +955,14 @@ HTML = r"""<!doctype html>
     analyze.addEventListener("click", analyzeGithub);
     approveNotion.addEventListener("click", () => postSelectedTasks("/api/approve-tasks", "Saving to Notion...", "Notion 등록 완료"));
     approveCalendar.addEventListener("click", () => postSelectedTasks("/api/approve-calendar-events", "Saving to Calendar...", "Calendar 등록 완료"));
+    calendarListView.addEventListener("click", () => {
+      calendarView = "list";
+      renderCalendarView();
+    });
+    calendarMonthView.addEventListener("click", () => {
+      calendarView = "month";
+      renderCalendarView();
+    });
     question.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
@@ -826,6 +1038,9 @@ class AppHandler(BaseHTTPRequestHandler):
                 owner, repo, installation_id = _select_default_repository(repositories)
             self._send_json(_load_config_members(owner, repo, installation_id))
             return
+        if parsed_url.path == "/api/calendar-events":
+            self._handle_calendar_events()
+            return
         if parsed_url.path == "/api/branches":
             self._handle_list_branches(parsed_url.query)
             return
@@ -870,6 +1085,25 @@ class AppHandler(BaseHTTPRequestHandler):
                 )
             )
             self._send_json(result)
+        except Exception as error:
+            self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_calendar_events(self) -> None:
+        try:
+            google_access_token = str(self._session().get("google_access_token") or "")
+            if not google_access_token:
+                self._send_json(
+                    {"error": "Google Calendar 연결 후 다시 시도해 주세요."},
+                    HTTPStatus.UNAUTHORIZED,
+                )
+                return
+            calendar = GoogleCalendarToolClient(mcp_auth_token=google_access_token or None)
+            self._send_json(
+                {
+                    "calendar_url": "https://calendar.google.com/calendar/u/0/r",
+                    "events": calendar.list_upcoming_events(),
+                }
+            )
         except Exception as error:
             self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
