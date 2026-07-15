@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -306,3 +308,120 @@ class DirectGitHubToolClient:
                 compacted[key] = self._compact(item)
 
         return compacted
+
+
+def _github_request(path: str, token: str, query: dict[str, Any] | None = None) -> Any:
+    """Direct authenticated GitHub REST call, independent of DirectGitHubToolClient's
+    env-var-only token (callers here may hold an OAuth session token or a GitHub App
+    installation token instead)."""
+
+    url = "https://api.github.com" + path
+    if query:
+        url += "?" + urllib.parse.urlencode(query)
+
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "github-ai-mcp-agent",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        body = error.read().decode("utf-8", errors="replace")
+        raise ValueError(f"GitHub API error {error.code} for {path}: {body}") from error
+
+
+MAX_TREE_FILES = 1000
+MAX_FILE_CONTENT_BYTES = 200_000
+
+
+def fetch_branches(
+    token: str,
+    owner: str,
+    repo: str,
+    *,
+    per_page: int = 100,
+) -> list[dict[str, Any]]:
+    payload = _github_request(
+        f"/repos/{owner}/{repo}/branches",
+        token,
+        {"per_page": per_page},
+    )
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "name": item.get("name"),
+            "sha": (item.get("commit") or {}).get("sha", ""),
+        }
+        for item in payload
+        if isinstance(item, dict)
+    ]
+
+
+def fetch_repo_tree(
+    token: str,
+    owner: str,
+    repo: str,
+    branch: str,
+) -> tuple[list[dict[str, Any]], bool]:
+    payload = _github_request(
+        f"/repos/{owner}/{repo}/git/trees/{urllib.parse.quote(branch, safe='')}",
+        token,
+        {"recursive": "1"},
+    )
+    if not isinstance(payload, dict):
+        return [], False
+
+    entries = payload.get("tree", [])
+    if not isinstance(entries, list):
+        entries = []
+
+    files = [
+        {"path": item.get("path"), "size": item.get("size") or 0}
+        for item in entries
+        if isinstance(item, dict) and item.get("type") == "blob"
+    ]
+
+    truncated = bool(payload.get("truncated"))
+    if len(files) > MAX_TREE_FILES:
+        files = files[:MAX_TREE_FILES]
+        truncated = True
+
+    return files, truncated
+
+
+def fetch_file_content(
+    token: str,
+    owner: str,
+    repo: str,
+    path: str,
+    ref: str,
+) -> dict[str, Any]:
+    payload = _github_request(
+        f"/repos/{owner}/{repo}/contents/{urllib.parse.quote(path)}",
+        token,
+        {"ref": ref},
+    )
+    if not isinstance(payload, dict):
+        return {"content": "", "too_large": False, "binary": True}
+
+    size = payload.get("size") or 0
+    if size > MAX_FILE_CONTENT_BYTES:
+        return {"content": "", "too_large": True, "binary": False}
+
+    if payload.get("encoding") != "base64" or not isinstance(payload.get("content"), str):
+        return {"content": "", "too_large": False, "binary": True}
+
+    try:
+        raw_bytes = base64.b64decode(payload["content"])
+        content = raw_bytes.decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return {"content": "", "too_large": False, "binary": True}
+
+    return {"content": content, "too_large": False, "binary": False}

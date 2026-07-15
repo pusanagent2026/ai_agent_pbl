@@ -14,6 +14,7 @@ import urllib.request
 
 from dotenv import load_dotenv
 
+from github_ai_agent import code_review
 from github_ai_agent.agent import GitHubToolChoosingAgent
 from github_ai_agent.github_app_auth import GitHubAppTokenProvider, resolve_default_repository
 from github_ai_agent.google_calendar_client import GoogleCalendarToolClient
@@ -128,6 +129,22 @@ HTML = r"""<!doctype html>
     .tool { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; background: #fbfcfe; }
     pre { margin: 8px 0 0; overflow: auto; border-radius: 8px; background: var(--code); padding: 10px; font-size: 12px; }
     .error { color: var(--warn); font-weight: 700; }
+    .tabs { display: flex; gap: 8px; }
+    .tab-button { padding: 8px 14px; font-weight: 700; }
+    .tab-button.active { border-color: var(--accent); background: var(--accent); color: #fff; }
+    .review-select-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .review-select-row select, .review-select-row input { flex: 1; min-width: 220px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); }
+    .file-list { max-height: 260px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+    .file-item { padding: 7px 10px; cursor: pointer; font-size: 13px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+    .file-item:last-child { border-bottom: 0; }
+    .file-item:hover { background: #f5f7fa; }
+    .file-item.selected { background: var(--accent); color: #fff; }
+    .error-card { border-left: 3px solid var(--warn); }
+    .comment-card.good { border-left: 3px solid var(--accent); }
+    .comment-card.bad { border-left: 3px solid var(--warn); }
+    .badge { border-radius: 999px; padding: 3px 9px; font-size: 11px; font-weight: 700; }
+    .badge.good { background: #ecfdf5; color: var(--accent-dark); }
+    .badge.bad { background: #fef2f2; color: var(--warn); }
     @media (max-width: 920px) {
       .shell { grid-template-columns: 1fr; }
       aside { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -172,33 +189,69 @@ HTML = r"""<!doctype html>
     </aside>
 
     <main>
-      <div class="composer">
-        <label class="field">
-          프로젝트 전체 마감일
-          <input id="projectDeadline" type="date" />
-        </label>
-        <textarea id="question" placeholder="예: 할 일을 팀원들에게 배분해줘"></textarea>
-        <div class="actions">
-          <span class="muted" id="status">Ready</span>
-          <div class="button-row">
-            <button class="primary" id="analyze">Analyze GitHub</button>
-            <button class="approve" id="approveNotion" disabled>Notion 등록</button>
-            <button class="approve" id="approveCalendar" disabled>Calendar 등록</button>
+      <div class="tabs">
+        <button class="tab-button active" id="tabTaskPlanner" type="button">작업 분배</button>
+        <button class="tab-button" id="tabCodeReview" type="button">코드 리뷰</button>
+      </div>
+
+      <div id="taskPlannerView">
+        <div class="composer">
+          <label class="field">
+            프로젝트 전체 마감일
+            <input id="projectDeadline" type="date" />
+          </label>
+          <textarea id="question" placeholder="예: 할 일을 팀원들에게 배분해줘"></textarea>
+          <div class="actions">
+            <span class="muted" id="status">Ready</span>
+            <div class="button-row">
+              <button class="primary" id="analyze">Analyze GitHub</button>
+              <button class="approve" id="approveNotion" disabled>Notion 등록</button>
+              <button class="approve" id="approveCalendar" disabled>Calendar 등록</button>
+            </div>
           </div>
+        </div>
+
+        <div class="results">
+          <section>
+            <h2>AI Analysis</h2>
+            <div class="answer" id="answer">아직 분석 결과가 없습니다.</div>
+            <h2 style="margin-top:18px;">Selected Tools</h2>
+            <div id="tools" class="muted">AI가 GitHub 분석에 사용한 tool이 여기에 표시됩니다.</div>
+          </section>
+          <section>
+            <h2>Proposed Tasks</h2>
+            <div id="tasks" class="muted">승인 전에는 Notion이나 Calendar에 아무것도 저장되지 않습니다.</div>
+          </section>
         </div>
       </div>
 
-      <div class="results">
-        <section>
-          <h2>AI Analysis</h2>
-          <div class="answer" id="answer">아직 분석 결과가 없습니다.</div>
-          <h2 style="margin-top:18px;">Selected Tools</h2>
-          <div id="tools" class="muted">AI가 GitHub 분석에 사용한 tool이 여기에 표시됩니다.</div>
-        </section>
-        <section>
-          <h2>Proposed Tasks</h2>
-          <div id="tasks" class="muted">승인 전에는 Notion이나 Calendar에 아무것도 저장되지 않습니다.</div>
-        </section>
+      <div id="codeReviewView" hidden>
+        <div class="composer">
+          <div class="review-select-row">
+            <select id="branchSelect"><option value="">브랜치를 불러오는 중...</option></select>
+            <input id="fileFilter" type="text" placeholder="파일 경로 필터 (예: agent.py)" />
+          </div>
+          <div id="fileList" class="file-list muted">브랜치를 선택하면 파일 목록이 표시됩니다.</div>
+          <div class="actions">
+            <span class="muted" id="reviewStatus">Ready</span>
+            <div class="button-row">
+              <button class="primary" id="reviewFile" disabled>Review File</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="results">
+          <section>
+            <h2>Summary</h2>
+            <div class="answer" id="reviewSummary">아직 리뷰 결과가 없습니다.</div>
+            <h2 style="margin-top:18px;">오류</h2>
+            <div id="reviewErrors" class="muted">아직 리뷰하지 않았습니다.</div>
+          </section>
+          <section>
+            <h2>코멘트</h2>
+            <div id="reviewComments" class="muted">잘한 점과 아쉬운 점이 여기에 표시됩니다.</div>
+          </section>
+        </div>
       </div>
     </main>
   </div>
@@ -218,10 +271,27 @@ HTML = r"""<!doctype html>
     const installGithub = document.querySelector("#installGithub");
     const connectGoogle = document.querySelector("#connectGoogle");
 
+    const tabTaskPlanner = document.querySelector("#tabTaskPlanner");
+    const tabCodeReview = document.querySelector("#tabCodeReview");
+    const taskPlannerView = document.querySelector("#taskPlannerView");
+    const codeReviewView = document.querySelector("#codeReviewView");
+    const branchSelect = document.querySelector("#branchSelect");
+    const fileFilter = document.querySelector("#fileFilter");
+    const fileListEl = document.querySelector("#fileList");
+    const reviewFile = document.querySelector("#reviewFile");
+    const reviewStatus = document.querySelector("#reviewStatus");
+    const reviewSummary = document.querySelector("#reviewSummary");
+    const reviewErrors = document.querySelector("#reviewErrors");
+    const reviewComments = document.querySelector("#reviewComments");
+
     let proposedTasks = [];
     let notionEnabled = false;
     let calendarEnabled = false;
     let selectedRepository = { owner: "", repo: "", installation_id: "" };
+    let branchesLoaded = false;
+    let currentBranch = "";
+    let allFiles = [];
+    let selectedFilePath = "";
 
     document.querySelectorAll(".example").forEach((button) => {
       button.addEventListener("click", () => {
@@ -295,8 +365,208 @@ HTML = r"""<!doctype html>
       selectedRepository = { owner, repo, installation_id: option.dataset.installationId || "" };
       localStorage.setItem("selectedRepository", JSON.stringify(selectedRepository));
       document.querySelector("#repo").textContent = `${owner}/${repo}`;
+      branchesLoaded = false;
       await loadMembers(owner, repo);
+      if (!codeReviewView.hidden) {
+        await loadBranches();
+      }
     });
+
+    function switchTab(target) {
+      const showCodeReview = target === "codeReview";
+      taskPlannerView.hidden = showCodeReview;
+      codeReviewView.hidden = !showCodeReview;
+      tabTaskPlanner.classList.toggle("active", !showCodeReview);
+      tabCodeReview.classList.toggle("active", showCodeReview);
+      if (showCodeReview && !branchesLoaded) {
+        loadBranches();
+      }
+    }
+
+    tabTaskPlanner.addEventListener("click", () => switchTab("taskPlanner"));
+    tabCodeReview.addEventListener("click", () => switchTab("codeReview"));
+
+    async function loadBranches() {
+      if (!selectedRepository.owner || !selectedRepository.repo) {
+        branchSelect.innerHTML = "<option value=''>먼저 저장소를 연결하세요</option>";
+        return;
+      }
+      branchSelect.innerHTML = "<option value=''>브랜치를 불러오는 중...</option>";
+      try {
+        const params = new URLSearchParams({
+          owner: selectedRepository.owner,
+          repo: selectedRepository.repo,
+          installation_id: selectedRepository.installation_id || "",
+        });
+        const response = await fetch(`/api/branches?${params.toString()}`);
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Request failed");
+        }
+        const branches = payload.branches || [];
+        branchesLoaded = true;
+        if (!branches.length) {
+          branchSelect.innerHTML = "<option value=''>브랜치가 없습니다</option>";
+          return;
+        }
+        branchSelect.innerHTML = "";
+        branches.forEach((branch) => {
+          const option = document.createElement("option");
+          option.value = branch.name;
+          option.textContent = branch.name;
+          branchSelect.appendChild(option);
+        });
+        currentBranch = branches[0].name;
+        await loadFileTree(currentBranch);
+      } catch (error) {
+        branchSelect.innerHTML = "<option value=''>브랜치를 불러오지 못했습니다</option>";
+        reviewStatus.textContent = error.message;
+      }
+    }
+
+    branchSelect.addEventListener("change", async () => {
+      currentBranch = branchSelect.value;
+      selectedFilePath = "";
+      reviewFile.disabled = true;
+      await loadFileTree(currentBranch);
+    });
+
+    async function loadFileTree(branch) {
+      if (!branch) {
+        return;
+      }
+      fileListEl.innerHTML = "<span class='muted'>파일 목록을 불러오는 중...</span>";
+      try {
+        const params = new URLSearchParams({
+          owner: selectedRepository.owner,
+          repo: selectedRepository.repo,
+          branch,
+          installation_id: selectedRepository.installation_id || "",
+        });
+        const response = await fetch(`/api/repo-tree?${params.toString()}`);
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Request failed");
+        }
+        allFiles = payload.files || [];
+        renderFileList(payload.truncated);
+      } catch (error) {
+        fileListEl.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+      }
+    }
+
+    function renderFileList(truncated) {
+      const filterText = fileFilter.value.trim().toLowerCase();
+      const filtered = filterText
+        ? allFiles.filter((file) => file.path.toLowerCase().includes(filterText))
+        : allFiles;
+
+      if (!filtered.length) {
+        fileListEl.innerHTML = "<span class='muted'>표시할 파일이 없습니다.</span>";
+        return;
+      }
+
+      fileListEl.innerHTML = "";
+      if (truncated) {
+        const notice = document.createElement("div");
+        notice.className = "muted";
+        notice.style.padding = "6px 10px";
+        notice.textContent = "저장소가 커서 일부 파일만 표시됩니다.";
+        fileListEl.appendChild(notice);
+      }
+      filtered.forEach((file) => {
+        const div = document.createElement("div");
+        div.className = "file-item" + (file.path === selectedFilePath ? " selected" : "");
+        div.textContent = file.path;
+        div.addEventListener("click", () => {
+          selectedFilePath = file.path;
+          reviewFile.disabled = false;
+          fileListEl.querySelectorAll(".file-item").forEach((el) => el.classList.remove("selected"));
+          div.classList.add("selected");
+        });
+        fileListEl.appendChild(div);
+      });
+    }
+
+    fileFilter.addEventListener("input", () => renderFileList(false));
+
+    function renderReviewErrors(errors) {
+      if (!errors || !errors.length) {
+        reviewErrors.innerHTML = "<span class='muted'>발견된 오류가 없습니다.</span>";
+        return;
+      }
+      reviewErrors.innerHTML = "";
+      errors.forEach((item) => {
+        const div = document.createElement("div");
+        div.className = "task error-card";
+        div.innerHTML = `
+          <div class="task-title">${escapeHtml(item.file || "")}${item.line ? `:${item.line}` : ""}</div>
+          <div>${escapeHtml(item.issue || "")}</div>
+          <div class="muted" style="margin-top:6px;"><strong>수정 방법:</strong> ${escapeHtml(item.fix || "")}</div>
+        `;
+        reviewErrors.appendChild(div);
+      });
+    }
+
+    function renderReviewComments(comments) {
+      if (!comments || !comments.length) {
+        reviewComments.innerHTML = "<span class='muted'>코멘트가 없습니다.</span>";
+        return;
+      }
+      reviewComments.innerHTML = "";
+      comments.forEach((item) => {
+        const div = document.createElement("div");
+        div.className = `task comment-card ${item.type === "bad" ? "bad" : "good"}`;
+        div.innerHTML = `
+          <span class="badge ${item.type === "bad" ? "bad" : "good"}">${item.type === "bad" ? "개선 필요" : "잘한 점"}</span>
+          ${item.file ? `<span class="tag" style="margin-left:6px;">${escapeHtml(item.file)}</span>` : ""}
+          <div style="margin-top:6px;">${escapeHtml(item.comment || "")}</div>
+        `;
+        reviewComments.appendChild(div);
+      });
+    }
+
+    async function reviewSelectedFile() {
+      if (!selectedFilePath) {
+        reviewStatus.textContent = "리뷰할 파일을 선택하세요";
+        return;
+      }
+      reviewFile.disabled = true;
+      reviewStatus.textContent = "Reviewing file...";
+      reviewSummary.textContent = "파일 코드를 분석하는 중입니다.";
+      reviewErrors.innerHTML = "<span class='muted'>분석 중...</span>";
+      reviewComments.innerHTML = "<span class='muted'>분석 중...</span>";
+      try {
+        const response = await fetch("/api/review-file", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            owner: selectedRepository.owner,
+            repo: selectedRepository.repo,
+            installation_id: selectedRepository.installation_id,
+            branch: currentBranch,
+            path: selectedFilePath,
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Request failed");
+        }
+        reviewSummary.textContent = payload.summary || "요약이 없습니다.";
+        renderReviewErrors(payload.errors || []);
+        renderReviewComments(payload.comments || []);
+        reviewStatus.textContent = "Done";
+      } catch (error) {
+        reviewSummary.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+        reviewErrors.innerHTML = "<span class='muted'>리뷰에 실패했습니다.</span>";
+        reviewComments.innerHTML = "<span class='muted'>리뷰에 실패했습니다.</span>";
+        reviewStatus.textContent = "Error";
+      } finally {
+        reviewFile.disabled = false;
+      }
+    }
+
+    reviewFile.addEventListener("click", reviewSelectedFile);
 
     async function loadMembers(owner, repo) {
       const params = new URLSearchParams({
@@ -556,6 +826,12 @@ class AppHandler(BaseHTTPRequestHandler):
                 owner, repo, installation_id = _select_default_repository(repositories)
             self._send_json(_load_config_members(owner, repo, installation_id))
             return
+        if parsed_url.path == "/api/branches":
+            self._handle_list_branches(parsed_url.query)
+            return
+        if parsed_url.path == "/api/repo-tree":
+            self._handle_repo_tree(parsed_url.query)
+            return
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
@@ -567,6 +843,9 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/approve-calendar-events":
             self._handle_approve_calendar_events()
+            return
+        if self.path == "/api/review-file":
+            self._handle_review_file()
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -605,6 +884,83 @@ class AppHandler(BaseHTTPRequestHandler):
             self._send_json(result)
         except Exception as error:
             self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_list_branches(self, query_string: str) -> None:
+        try:
+            query = parse_qs(query_string)
+            owner = (query.get("owner") or [""])[0].strip()
+            repo = (query.get("repo") or [""])[0].strip()
+            installation_id = (query.get("installation_id") or [""])[0].strip()
+            if not owner or not repo:
+                repositories = _load_repositories(self._session())
+                owner, repo, installation_id = _select_default_repository(repositories)
+            session_token = str(self._session().get("github_access_token") or "")
+            branches = asyncio.run(
+                code_review.list_branches(
+                    owner,
+                    repo,
+                    installation_id=installation_id,
+                    session_token=session_token,
+                )
+            )
+            self._send_json({"branches": branches})
+        except Exception as error:
+            self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_repo_tree(self, query_string: str) -> None:
+        try:
+            query = parse_qs(query_string)
+            owner = (query.get("owner") or [""])[0].strip()
+            repo = (query.get("repo") or [""])[0].strip()
+            branch = (query.get("branch") or [""])[0].strip()
+            installation_id = (query.get("installation_id") or [""])[0].strip()
+            if not owner or not repo:
+                repositories = _load_repositories(self._session())
+                owner, repo, installation_id = _select_default_repository(repositories)
+            if not branch:
+                self._send_json({"error": "branch is required"}, HTTPStatus.BAD_REQUEST)
+                return
+            session_token = str(self._session().get("github_access_token") or "")
+            result = asyncio.run(
+                code_review.list_repo_tree(
+                    owner,
+                    repo,
+                    branch,
+                    installation_id=installation_id,
+                    session_token=session_token,
+                )
+            )
+            self._send_json(result)
+        except Exception as error:
+            self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_review_file(self) -> None:
+        try:
+            payload = self._read_json()
+            owner = str(payload.get("owner", "")).strip()
+            repo = str(payload.get("repo", "")).strip()
+            installation_id = str(payload.get("installation_id", "")).strip()
+            branch = str(payload.get("branch", "")).strip()
+            path = str(payload.get("path", "")).strip()
+            if not owner or not repo or not branch or not path:
+                self._send_json(
+                    {"error": "owner, repo, branch, path are required"}, HTTPStatus.BAD_REQUEST
+                )
+                return
+            session_token = str(self._session().get("github_access_token") or "")
+            result = asyncio.run(
+                code_review.review_file(
+                    owner,
+                    repo,
+                    branch,
+                    path,
+                    installation_id=installation_id,
+                    session_token=session_token,
+                )
+            )
+            self._send_json(result)
+        except Exception as error:
+            self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def _handle_approve_calendar_events(self) -> None:
         try:
