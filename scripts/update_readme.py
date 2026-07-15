@@ -25,9 +25,8 @@ from openai import OpenAI  # noqa: E402
 
 from github_ai_agent.readme_updater import (  # noqa: E402
     MAX_DIFF_CHARS,
-    is_doc_only_change,
-    is_relevant,
     rewrite_readme,
+    should_update_readme,
 )
 
 README_PATH = Path("README.md")
@@ -65,6 +64,11 @@ def get_diff(base_sha: str, head_sha: str) -> str:
     return raw
 
 
+def get_commit_messages(base_sha: str, head_sha: str) -> list[str]:
+    raw = run_git(["log", "--format=%s", f"{base_sha}..{head_sha}"])
+    return [line for line in raw.splitlines() if line]
+
+
 def write_github_output(name: str, value: str) -> None:
     output_path = os.environ.get("GITHUB_OUTPUT")
     if not output_path:
@@ -95,16 +99,14 @@ def main() -> None:
         write_github_output("readme_changed", "false")
         return
 
-    if is_doc_only_change(changed_files):
-        print("Only README/docs changed (or nothing changed); skipping to avoid loops.")
-        write_github_output("readme_changed", "false")
-        return
-
+    commit_messages = get_commit_messages(base_sha, head_sha)
     diff_text = get_diff(base_sha, head_sha)
     client = OpenAI(timeout=60)
 
-    if not is_relevant(diff_text, changed_files, client):
-        print("Filter model judged that no README update is needed.")
+    needs_update, trace = should_update_readme(diff_text, changed_files, commit_messages, client)
+    print(f"3-layer filter trace: {trace}")
+    if not needs_update:
+        print("3-layer filter judged that no README update is needed.")
         write_github_output("readme_changed", "false")
         return
 

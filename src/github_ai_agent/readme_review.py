@@ -8,6 +8,7 @@ GitHub Actions pipeline's judgment.
 
 from __future__ import annotations
 
+import difflib
 import time
 from typing import Any
 
@@ -28,6 +29,22 @@ README_PATH = "README.md"
 PR_TITLE = "docs: README 자동 최신화"
 
 
+def _build_line_diff(current: str, proposed: str) -> list[dict[str, str]]:
+    current_lines = current.splitlines()
+    proposed_lines = proposed.splitlines()
+    matcher = difflib.SequenceMatcher(None, current_lines, proposed_lines)
+    lines: list[dict[str, str]] = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            lines.extend({"type": "equal", "text": t} for t in current_lines[i1:i2])
+            continue
+        if tag in ("delete", "replace"):
+            lines.extend({"type": "remove", "text": t} for t in current_lines[i1:i2])
+        if tag in ("insert", "replace"):
+            lines.extend({"type": "add", "text": t} for t in proposed_lines[j1:j2])
+    return lines
+
+
 async def analyze_readme_update(
     owner: str,
     repo: str,
@@ -40,7 +57,8 @@ async def analyze_readme_update(
     commit = fetch_latest_commit_diff(token, owner, repo, branch)
     changed_files = commit["changed_files"]
 
-    if not changed_files or readme_updater.is_doc_only_change(changed_files):
+    # Cheap path-only pre-check so a hard-skip avoids the README fetch below.
+    if not changed_files or readme_updater.layer1_rule_filter(changed_files, [])["hard_skip"]:
         return {
             "relevant": False,
             "changed": False,
@@ -49,13 +67,17 @@ async def analyze_readme_update(
             "current_readme": "",
             "proposed_readme": "",
             "summary": "",
+            "diff": [],
         }
 
     current = fetch_file_content(token, owner, repo, README_PATH, branch)
     current_readme = current["content"]
 
     client = OpenAI(timeout=60)
-    relevant = readme_updater.is_relevant(commit["diff_text"], changed_files, client)
+    relevant, trace = readme_updater.should_update_readme(
+        commit["diff_text"], changed_files, [commit["message"]], client
+    )
+    print(f"3-layer filter trace: {trace}")
     if not relevant:
         return {
             "relevant": False,
@@ -65,6 +87,7 @@ async def analyze_readme_update(
             "current_readme": current_readme,
             "proposed_readme": "",
             "summary": "",
+            "diff": [],
         }
 
     proposed_readme, summary = readme_updater.rewrite_readme(
@@ -80,6 +103,7 @@ async def analyze_readme_update(
         "current_readme": current_readme,
         "proposed_readme": proposed_readme if changed else current_readme,
         "summary": summary,
+        "diff": _build_line_diff(current_readme, proposed_readme) if changed else [],
     }
 
 

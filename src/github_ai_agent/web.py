@@ -149,6 +149,8 @@ HTML = r"""<!doctype html>
     .tool { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; background: #fbfcfe; }
     pre { margin: 8px 0 0; overflow: auto; border-radius: 8px; background: var(--code); padding: 10px; font-size: 12px; }
     .error { color: var(--warn); font-weight: 700; }
+    .diff-add { background: #ecfdf5; color: #166534; }
+    .diff-remove { background: #fef2f2; color: #991b1b; }
     .tabs { display: flex; gap: 8px; }
     .tab-button { padding: 8px 14px; font-weight: 700; }
     .tab-button.active { border-color: var(--accent); background: var(--accent); color: #fff; }
@@ -306,10 +308,8 @@ HTML = r"""<!doctype html>
             <div class="answer" id="readmeVerdict">아직 분석하지 않았습니다.</div>
           </section>
           <section>
-            <h2>현재 README</h2>
-            <pre id="readmeCurrent" class="muted" style="white-space:pre-wrap;max-height:400px;">-</pre>
-            <h2 style="margin-top:18px;">제안된 README</h2>
-            <pre id="readmeProposed" class="muted" style="white-space:pre-wrap;max-height:400px;">-</pre>
+            <h2>변경 사항</h2>
+            <pre id="readmeDiff" class="muted" style="white-space:pre-wrap;max-height:400px;">-</pre>
           </section>
         </div>
       </div>
@@ -354,8 +354,7 @@ HTML = r"""<!doctype html>
     const applyReadmeUpdateButton = document.querySelector("#applyReadmeUpdate");
     const readmeStatus = document.querySelector("#readmeStatus");
     const readmeVerdict = document.querySelector("#readmeVerdict");
-    const readmeCurrent = document.querySelector("#readmeCurrent");
-    const readmeProposed = document.querySelector("#readmeProposed");
+    const readmeDiff = document.querySelector("#readmeDiff");
 
     let proposedTasks = [];
     let notionEnabled = false;
@@ -473,7 +472,7 @@ HTML = r"""<!doctype html>
       `;
       calendarEvents.appendChild(wrapper);
       const grid = wrapper.querySelector("#miniCalendarGrid");
-      ["?", "?", "?", "?", "?", "?", "?"].forEach((day) => {
+      ["일", "월", "화", "수", "목", "금", "토"].forEach((day) => {
         const label = document.createElement("div");
         label.className = "mini-calendar-day-name";
         label.textContent = day;
@@ -1063,6 +1062,18 @@ HTML = r"""<!doctype html>
       applyReadmeUpdateButton.disabled = true;
     });
 
+    function renderReadmeDiff(diff, fallbackText) {
+      if (!diff || !diff.length) {
+        readmeDiff.textContent = fallbackText || "-";
+        return;
+      }
+      readmeDiff.innerHTML = diff.map((line) => {
+        const prefix = line.type === "add" ? "+ " : line.type === "remove" ? "- " : "  ";
+        const cls = line.type === "add" ? "diff-add" : line.type === "remove" ? "diff-remove" : "";
+        return `<div class="${cls}">${escapeHtml(prefix + line.text)}</div>`;
+      }).join("");
+    }
+
     async function analyzeReadme() {
       if (!readmeCurrentBranch) {
         readmeStatus.textContent = "브랜치를 먼저 선택하세요";
@@ -1073,8 +1084,7 @@ HTML = r"""<!doctype html>
       readmeProposal = null;
       readmeStatus.textContent = "Analyzing...";
       readmeVerdict.textContent = "분석 중입니다...";
-      readmeCurrent.textContent = "-";
-      readmeProposed.textContent = "-";
+      readmeDiff.textContent = "-";
       try {
         const response = await fetch("/api/analyze-readme", {
           method: "POST",
@@ -1090,8 +1100,7 @@ HTML = r"""<!doctype html>
         if (!response.ok) {
           throw new Error(payload.error || "Request failed");
         }
-        readmeCurrent.textContent = payload.current_readme || "-";
-        readmeProposed.textContent = payload.proposed_readme || payload.current_readme || "-";
+        renderReadmeDiff(payload.diff, payload.current_readme);
         if (!payload.relevant) {
           readmeVerdict.textContent = `이번 최신 커밋(${payload.commit_message || ""})은 README 갱신이 필요하지 않다고 판단했습니다.`;
         } else if (!payload.changed) {
