@@ -30,13 +30,15 @@ GitHub 데이터는 직접 REST API backend로 읽지 않고, `GITHUB_MCP_COMMAN
 권장 권한:
 
 ```text
-Contents: Read-only
+Contents: Read and write        # 코드 조회 + README 자동 갱신 PR 생성에 필요
 Issues: Read-only
-Pull requests: Read-only
+Pull requests: Read and write   # README 자동 갱신 PR 생성에 필요
 Actions: Read-only
 Metadata: Read-only
 Administration: Read-only       # collaborators 조회가 필요할 때
 ```
+
+기존에 설치된 App의 권한을 바꾼 경우, GitHub이 자동으로 반영하지 않습니다. `Install App` 화면에서 설치를 다시 열어 바뀐 권한을 조직/계정 관리자가 재승인해야 새 권한이 실제로 적용됩니다.
 
 Organization members를 읽어야 한다면 Organization permissions에서 `Members: Read-only`도 추가합니다.
 
@@ -146,6 +148,9 @@ src/github_ai_agent/
   tool_client.py            # combines multiple tool clients
   mcp_client.py             # MCP backend for later
   prompts.py                # GitHub 도메인 system prompt
+  code_review.py            # 코드 리뷰 탭 도메인 로직
+  readme_review.py          # README 갱신 탭 도메인 로직 (분석 + PR 생성)
+  readme_updater.py         # README 갱신 여부 판단/재작성 LLM 로직 (scripts/update_readme.py와 공유)
 
   orchestrator/
     agent.py                # OrchestratorAgent — 질문을 보고 도메인에 위임
@@ -168,3 +173,17 @@ src/github_ai_agent/
 ## README 갱신 원칙
 
 README는 단순 코드 수정마다 갱신하지 않고, 사용자에게 보이는 기능, 실행 방법, 설정값, 외부 연동, 권한 요구사항이 바뀔 때 갱신합니다.
+
+## README 자동 업데이트 봇 설정
+
+`main`에 push되면 `.github/workflows/readme-autoupdate.yml`이 변경 diff를 분석해 위 원칙에 해당하는 변경인지 판단하고, 필요한 경우에만 새 브랜치(`docs/auto-update-readme-<run number>`)에 커밋한 뒤 PR을 자동으로 엽니다. main에는 직접 커밋하지 않으며, 병합은 항상 사람이 직접 검토 후 진행합니다.
+
+1차(관련성 판단, `gpt-4o-mini`)와 2차(재작성, `gpt-4o`) 모델은 워크플로 파일 상단의 `README_FILTER_MODEL`, `README_REWRITE_MODEL` 환경변수로 바꿀 수 있습니다.
+
+설정 방법:
+
+1. GitHub 저장소 `Settings` → `Secrets and variables` → `Actions` → `New repository secret`에서 `OPENAI_API_KEY`를 등록합니다.
+2. `Settings` → `Actions` → `General` → `Workflow permissions`에서 "Read and write permissions"를 켭니다(워크플로가 브랜치를 push하고 PR을 열 수 있어야 합니다).
+3. 별도 설정 없이 `main`에 push하면 자동 실행되며, `workflow_dispatch`로 Actions 탭에서 수동 실행도 가능합니다.
+
+웹 UI의 "README 갱신" 탭에서도 같은 판단/재작성 로직을 수동으로 실행할 수 있습니다. 브랜치를 고르고 "Analyze README"를 누르면 그 브랜치의 최신 커밋을 분석하고, "PR 생성"을 누르면 같은 방식으로 새 브랜치 + PR을 만듭니다(이때는 GitHub App의 Contents/Pull requests 쓰기 권한이 필요합니다 — 위 "GitHub App 만들기"의 권장 권한 참고).

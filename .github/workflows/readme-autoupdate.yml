@@ -1,0 +1,53 @@
+name: README Auto Update
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  README_FILTER_MODEL: gpt-4o-mini
+  README_REWRITE_MODEL: gpt-4o
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-readme:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Analyze diff and update README
+        id: update
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          README_FILTER_MODEL: ${{ env.README_FILTER_MODEL }}
+          README_REWRITE_MODEL: ${{ env.README_REWRITE_MODEL }}
+        run: |
+          python scripts/update_readme.py "${{ github.event.before }}" "${{ github.sha }}"
+
+      - name: Create Pull Request
+        if: steps.update.outputs.readme_changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "docs: README 자동 최신화"
+          branch: docs/auto-update-readme-${{ github.run_number }}
+          base: main
+          title: "docs: README 자동 최신화"
+          body: ${{ steps.update.outputs.summary }}
+          add-paths: README.md
