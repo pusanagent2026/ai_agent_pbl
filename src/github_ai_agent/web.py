@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import asyncio
 import json
 import os
@@ -184,6 +185,7 @@ HTML = r"""<!doctype html>
         <div class="connect-row">
           <a class="link-button" id="connectGithub" href="/auth/github">GitHub 연결</a>
           <a class="link-button" id="installGithub" href="/auth/github/install" hidden>앱 설치</a>
+          <a class="link-button" id="connectNotion" href="/auth/notion">Notion 연결</a>
           <a class="link-button" id="connectGoogle" href="/auth/google">Google Calendar 연결</a>
         </div>
         <div class="chips">
@@ -192,6 +194,23 @@ HTML = r"""<!doctype html>
           <span class="chip" id="notion">notion</span>
           <span class="chip" id="calendar">calendar</span>
         </div>
+        <label class="field" id="notionDatabaseField" hidden>
+          Notion Database
+          <select id="notionDatabaseSelect"></select>
+        </label>
+        <label class="field" id="notionPageField" hidden>
+          Notion Page
+          <select id="notionPageSelect"></select>
+        </label>
+        <label class="field" id="notionSaveModeField" hidden>
+          Notion 저장 방식
+          <select id="notionSaveMode">
+            <option value="database">DB에 작업 행으로 등록</option>
+            <option value="page">페이지에 분석 기록으로 저장</option>
+            <option value="checklist">페이지에 체크리스트로 저장</option>
+          </select>
+        </label>
+        <button class="example" id="createNotionDatabase" type="button" hidden>Notion 작업 DB 자동 생성</button>
         <div class="members">
           <span class="muted">GitHub IDs</span>
           <div class="member-list" id="members"><span class="chip">loading...</span></div>
@@ -264,6 +283,7 @@ HTML = r"""<!doctype html>
             <span class="muted" id="reviewStatus">Ready</span>
             <div class="button-row">
               <button class="primary" id="reviewFile" disabled>Review File</button>
+              <button class="approve" id="saveReviewNotion" disabled>Notion에 리뷰 저장</button>
             </div>
           </div>
         </div>
@@ -297,6 +317,14 @@ HTML = r"""<!doctype html>
     const repoSelect = document.querySelector("#repoSelect");
     const connectGithub = document.querySelector("#connectGithub");
     const installGithub = document.querySelector("#installGithub");
+    const connectNotion = document.querySelector("#connectNotion");
+    const notionDatabaseField = document.querySelector("#notionDatabaseField");
+    const notionDatabaseSelect = document.querySelector("#notionDatabaseSelect");
+    const notionPageField = document.querySelector("#notionPageField");
+    const notionPageSelect = document.querySelector("#notionPageSelect");
+    const notionSaveModeField = document.querySelector("#notionSaveModeField");
+    const notionSaveMode = document.querySelector("#notionSaveMode");
+    const createNotionDatabase = document.querySelector("#createNotionDatabase");
     const connectGoogle = document.querySelector("#connectGoogle");
     const googleCalendarLink = document.querySelector("#googleCalendarLink");
     const calendarEvents = document.querySelector("#calendarEvents");
@@ -311,6 +339,7 @@ HTML = r"""<!doctype html>
     const fileFilter = document.querySelector("#fileFilter");
     const fileListEl = document.querySelector("#fileList");
     const reviewFile = document.querySelector("#reviewFile");
+    const saveReviewNotion = document.querySelector("#saveReviewNotion");
     const reviewStatus = document.querySelector("#reviewStatus");
     const reviewSummary = document.querySelector("#reviewSummary");
     const reviewErrors = document.querySelector("#reviewErrors");
@@ -324,6 +353,7 @@ HTML = r"""<!doctype html>
     let currentBranch = "";
     let allFiles = [];
     let selectedFilePath = "";
+    let lastReviewResult = null;
     let calendarView = "list";
     let loadedCalendarEvents = [];
 
@@ -348,6 +378,8 @@ HTML = r"""<!doctype html>
       calendarEnabled = Boolean(config.calendar_enabled);
       document.querySelector("#notion").textContent = notionEnabled ? "notion on" : "notion off";
       document.querySelector("#calendar").textContent = calendarEnabled ? "calendar on" : "calendar off";
+      renderNotionDatabases(config.notion_databases || [], config.notion_database_id || "", Boolean(config.notion_workspace));
+      renderNotionPages(config.notion_pages || [], config.notion_page_id || "", Boolean(config.notion_workspace));
       googleCalendarLink.href = calendarEnabled ? "https://calendar.google.com/calendar/u/0/r" : "/auth/google";
       await loadCalendarEvents();
       renderMembers(config.members || [], config.member_warnings || []);
@@ -374,6 +406,41 @@ HTML = r"""<!doctype html>
       } catch (error) {
         calendarEvents.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
       }
+    }
+
+    function renderNotionDatabases(databases, selectedDatabaseId, notionConnected) {
+      notionDatabaseSelect.innerHTML = "";
+      if (!databases.length) {
+        notionDatabaseField.hidden = true;
+        createNotionDatabase.hidden = !notionConnected;
+      } else {
+        databases.forEach((database) => {
+          const option = document.createElement("option");
+          option.value = database.id;
+          option.textContent = database.title || "Untitled database";
+          option.selected = database.id === selectedDatabaseId;
+          notionDatabaseSelect.appendChild(option);
+        });
+        notionDatabaseField.hidden = false;
+        createNotionDatabase.hidden = !notionConnected;
+      }
+      notionSaveModeField.hidden = !notionConnected;
+    }
+
+    function renderNotionPages(pages, selectedPageId, notionConnected) {
+      notionPageSelect.innerHTML = "";
+      if (!pages.length) {
+        notionPageField.hidden = true;
+        return;
+      }
+      pages.forEach((page) => {
+        const option = document.createElement("option");
+        option.value = page.id;
+        option.textContent = page.title || "Untitled page";
+        option.selected = page.id === selectedPageId;
+        notionPageSelect.appendChild(option);
+      });
+      notionPageField.hidden = false;
     }
 
     function renderCalendarView() {
@@ -429,7 +496,7 @@ HTML = r"""<!doctype html>
       `;
       calendarEvents.appendChild(wrapper);
       const grid = wrapper.querySelector("#miniCalendarGrid");
-      ["?", "?", "?", "?", "?", "?", "?"].forEach((day) => {
+      ["일", "월", "화", "수", "목", "금", "토"].forEach((day) => {
         const label = document.createElement("div");
         label.className = "mini-calendar-day-name";
         label.textContent = day;
@@ -757,6 +824,8 @@ HTML = r"""<!doctype html>
         reviewSummary.textContent = payload.summary || "요약이 없습니다.";
         renderReviewErrors(payload.errors || []);
         renderReviewComments(payload.comments || []);
+        lastReviewResult = payload;
+        saveReviewNotion.disabled = !notionEnabled;
         reviewStatus.textContent = "Done";
       } catch (error) {
         reviewSummary.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
@@ -769,6 +838,39 @@ HTML = r"""<!doctype html>
     }
 
     reviewFile.addEventListener("click", reviewSelectedFile);
+
+    async function saveReviewToNotion() {
+      if (!lastReviewResult) {
+        reviewStatus.textContent = "리뷰할 파일을 선택하세요.";
+        return;
+      }
+      saveReviewNotion.disabled = true;
+      reviewStatus.textContent = "Saving review to Notion...";
+      try {
+        const response = await fetch("/api/save-review-to-notion", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            review: lastReviewResult,
+            page_id: notionPageSelect.value,
+            save_mode: notionSaveMode.value === "checklist" ? "checklist" : "page",
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Request failed");
+        }
+        const url = payload.url ? `: ${payload.url}` : "";
+        reviewStatus.textContent = `Saved to Notion${url}`;
+      } catch (error) {
+        reviewStatus.textContent = "Error";
+        reviewSummary.innerHTML += `<br><span class="error">${escapeHtml(error.message)}</span>`;
+      } finally {
+        saveReviewNotion.disabled = !notionEnabled || !lastReviewResult;
+      }
+    }
+
+    saveReviewNotion.addEventListener("click", saveReviewToNotion);
 
     async function loadMembers(owner, repo) {
       const params = new URLSearchParams({
@@ -794,6 +896,7 @@ HTML = r"""<!doctype html>
       const hasTasks = proposedTasks.length > 0;
       approveNotion.disabled = !notionEnabled || !hasTasks;
       approveCalendar.disabled = !calendarEnabled || !hasTasks;
+      saveReviewNotion.disabled = !notionEnabled || !lastReviewResult;
     }
 
     function renderMembers(members, warnings) {
@@ -820,17 +923,7 @@ HTML = r"""<!doctype html>
     }
 
     function renderTools(selectedTools) {
-      if (!selectedTools.length) {
-        tools.innerHTML = "<span class='muted'>선택된 tool이 없습니다.</span>";
-        return;
-      }
-      tools.innerHTML = "";
-      selectedTools.forEach((item, index) => {
-        const div = document.createElement("div");
-        div.className = "tool";
-        div.innerHTML = `<strong>${index + 1}. ${escapeHtml(item.tool)}</strong><pre>${escapeHtml(JSON.stringify(item.arguments || {}, null, 2))}</pre>`;
-        tools.appendChild(div);
-      });
+      return;
     }
 
     function renderTasks(items) {
@@ -931,14 +1024,23 @@ HTML = r"""<!doctype html>
         const response = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tasks: items }),
+          body: JSON.stringify({
+            tasks: items,
+            save_mode: notionSaveMode.value,
+            page_id: notionPageSelect.value,
+            answer: answer.textContent,
+          }),
         });
         const payload = await response.json();
         if (!response.ok) {
           throw new Error(payload.error || "Request failed");
         }
         const count = (payload.created || []).length;
-        answer.textContent += `\n\n${successText}: ${count}개`;
+        const links = (payload.created || [])
+          .filter((item) => item.url)
+          .map((item, index) => `<a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">Notion에서 열기 ${index + 1}</a>`)
+          .join("<br>");
+        answer.innerHTML += `<br><br>${escapeHtml(successText)}: ${count}?${links ? "<br>" + links : ""}`;
         renderTools(payload.selected_tools || []);
         status.textContent = "Saved";
       } catch (error) {
@@ -953,6 +1055,42 @@ HTML = r"""<!doctype html>
     analyze.addEventListener("click", analyzeGithub);
     approveNotion.addEventListener("click", () => postSelectedTasks("/api/approve-tasks", "Saving to Notion...", "Notion 등록 완료"));
     approveCalendar.addEventListener("click", () => postSelectedTasks("/api/approve-calendar-events", "Saving to Calendar...", "Calendar 등록 완료"));
+    notionDatabaseSelect.addEventListener("change", async () => {
+      const databaseId = notionDatabaseSelect.value;
+      if (!databaseId) return;
+      await fetch("/api/select-notion-database", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ database_id: databaseId }),
+      });
+      notionEnabled = true;
+      document.querySelector("#notion").textContent = "notion on";
+      refreshApproveButtons();
+    });
+    createNotionDatabase.addEventListener("click", async () => {
+      createNotionDatabase.disabled = true;
+      status.textContent = "Creating Notion database...";
+      try {
+        const response = await fetch("/api/create-notion-database", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: "AI Agent Tasks" }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Failed to create Notion database");
+        renderNotionDatabases(payload.databases || [], payload.database_id || "", true);
+        notionEnabled = true;
+        document.querySelector("#notion").textContent = "notion on";
+        status.textContent = "Notion database ready";
+        refreshApproveButtons();
+      } catch (error) {
+        status.textContent = "Error";
+        answer.innerHTML += `<br><span class="error">${escapeHtml(error.message)}</span>`;
+      } finally {
+        createNotionDatabase.disabled = false;
+      }
+    });
+
     calendarListView.addEventListener("click", () => {
       calendarView = "list";
       renderCalendarView();
@@ -1002,10 +1140,25 @@ class AppHandler(BaseHTTPRequestHandler):
         if parsed_url.path == "/auth/google/callback":
             self._handle_google_callback(parsed_url.query)
             return
+        if parsed_url.path == "/auth/notion":
+            self._redirect_to_notion_login()
+            return
+        if parsed_url.path == "/auth/notion/callback":
+            self._handle_notion_callback(parsed_url.query)
+            return
         if parsed_url.path == "/api/config":
-            notion = NotionToolClient()
-            calendar = GoogleCalendarToolClient()
             session = self._session()
+            notion_databases = _load_notion_databases(session)
+            notion_pages = _load_notion_pages(session)
+            if session.get("notion_access_token") and not session.get("notion_database_id") and notion_databases:
+                session["notion_database_id"] = notion_databases[0]["id"]
+            if session.get("notion_access_token") and not session.get("notion_page_id") and notion_pages:
+                session["notion_page_id"] = notion_pages[0]["id"]
+            notion = NotionToolClient(
+                token=str(session.get("notion_access_token") or "") or None,
+                database_id=str(session.get("notion_database_id") or "") or None,
+            )
+            calendar = GoogleCalendarToolClient()
             repositories = _load_repositories(session)
             owner, repo, installation_id = _select_default_repository(repositories)
             self._send_json(
@@ -1016,9 +1169,14 @@ class AppHandler(BaseHTTPRequestHandler):
                     "repositories": repositories,
                     "github_user": session.get("github_login", ""),
                     "google_user": session.get("google_email", ""),
+                    "notion_workspace": session.get("notion_workspace_name", ""),
+                    "notion_database_id": session.get("notion_database_id", notion.config.database_id),
+                    "notion_databases": notion_databases,
+                    "notion_page_id": session.get("notion_page_id", ""),
+                    "notion_pages": notion_pages,
                     "model": os.environ.get("OPENAI_MODEL", "gpt-4.1-mini"),
                     "backend": "github-mcp",
-                    "notion_enabled": notion.enabled,
+                    "notion_enabled": notion.enabled or bool(session.get("notion_access_token")),
                     "calendar_enabled": _calendar_enabled_for_session(calendar, session),
                     "calendar_timezone": calendar.config.timezone,
                     "assignee_property": notion.config.assignee_property,
@@ -1053,6 +1211,15 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/approve-tasks":
             self._handle_approve_tasks()
+            return
+        if self.path == "/api/select-notion-database":
+            self._handle_select_notion_database()
+            return
+        if self.path == "/api/create-notion-database":
+            self._handle_create_notion_database()
+            return
+        if self.path == "/api/save-review-to-notion":
+            self._handle_save_review_to_notion()
             return
         if self.path == "/api/approve-calendar-events":
             self._handle_approve_calendar_events()
@@ -1109,10 +1276,120 @@ class AppHandler(BaseHTTPRequestHandler):
         try:
             payload = self._read_json()
             tasks = payload.get("tasks", [])
+            save_mode = str(payload.get("save_mode") or "database").strip()
+            page_id = str(payload.get("page_id") or "").strip()
+            answer_text = str(payload.get("answer") or "").strip()
             if not isinstance(tasks, list) or not tasks:
                 self._send_json({"error": "tasks are required"}, HTTPStatus.BAD_REQUEST)
                 return
-            result = asyncio.run(create_notion_tasks(tasks))
+            session = self._session()
+            notion_token = str(session.get("notion_access_token") or "")
+            notion_database_id = str(session.get("notion_database_id") or "")
+            if not notion_token and not os.environ.get("NOTION_API_KEY") and not os.environ.get("NOTION_TOKEN"):
+                self._send_json({"error": "Notion 연결이 필요합니다."}, HTTPStatus.UNAUTHORIZED)
+                return
+            if save_mode in {"page", "checklist"}:
+                if not notion_token:
+                    self._send_json({"error": "Notion 연결이 필요합니다."}, HTTPStatus.UNAUTHORIZED)
+                    return
+                if not page_id:
+                    pages = _load_notion_pages(session)
+                    if pages:
+                        page_id = pages[0]["id"]
+                        session["notion_page_id"] = page_id
+                if not page_id:
+                    self._send_json({"error": "Notion에 기록할 위치를 찾을 수 없습니다."}, HTTPStatus.BAD_REQUEST)
+                    return
+                result = asyncio.run(
+                    create_notion_report(
+                        tasks,
+                        body=answer_text,
+                        title="AI Agent 작업 분석 기록",
+                        checklist=save_mode == "checklist",
+                        notion_token=notion_token,
+                        notion_page_id=page_id,
+                    )
+                )
+                self._send_json(result)
+                return
+            if notion_token and not notion_database_id:
+                databases = _load_notion_databases(session)
+                if databases:
+                    notion_database_id = databases[0]["id"]
+                    session["notion_database_id"] = notion_database_id
+                else:
+                    notion = NotionToolClient(token=notion_token, database_id="placeholder")
+                    pages = notion.list_pages()
+                    if not pages:
+                        self._send_json({"error": "Notion 데이터베이스를 만들 페이지를 찾을 수 없습니다."}, HTTPStatus.BAD_REQUEST)
+                        return
+                    created_database = notion.create_task_database(parent_page_id=pages[0]["id"], title="AI Agent Tasks")
+                    notion_database_id = created_database["id"]
+                    session["notion_database_id"] = notion_database_id
+            result = asyncio.run(create_notion_tasks(tasks, notion_token=notion_token, notion_database_id=notion_database_id))
+            self._send_json(result)
+        except Exception as error:
+            self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_select_notion_database(self) -> None:
+        try:
+            payload = self._read_json()
+            database_id = str(payload.get("database_id") or "").strip()
+            if not database_id:
+                self._send_json({"error": "database_id is required"}, HTTPStatus.BAD_REQUEST)
+                return
+            self._session()["notion_database_id"] = database_id
+            self._send_json({"selected": True, "database_id": database_id})
+        except Exception as error:
+            self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_create_notion_database(self) -> None:
+        try:
+            session = self._session()
+            token = str(session.get("notion_access_token") or "")
+            if not token:
+                self._send_json({"error": "Notion 연결이 필요합니다."}, HTTPStatus.UNAUTHORIZED)
+                return
+            payload = self._read_json()
+            title = str(payload.get("title") or "AI Agent Tasks").strip()
+            notion = NotionToolClient(token=token, database_id="placeholder")
+            pages = notion.list_pages()
+            if not pages:
+                self._send_json({"error": "Notion 데이터베이스를 만들 페이지를 찾을 수 없습니다."}, HTTPStatus.BAD_REQUEST)
+                return
+            database = notion.create_task_database(parent_page_id=pages[0]["id"], title=title)
+            database_id = database.get("id", "")
+            if not database_id:
+                raise ValueError("Notion database creation did not return an id.")
+            session["notion_database_id"] = database_id
+            databases = _load_notion_databases(session)
+            self._send_json({"created": True, "database_id": database_id, "database": database, "databases": databases})
+        except Exception as error:
+            self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_save_review_to_notion(self) -> None:
+        try:
+            payload = self._read_json()
+            review = payload.get("review")
+            if not isinstance(review, dict):
+                self._send_json({"error": "review is required"}, HTTPStatus.BAD_REQUEST)
+                return
+            session = self._session()
+            notion_token = str(session.get("notion_access_token") or "")
+            if not notion_token:
+                self._send_json({"error": "Notion 연결이 필요합니다."}, HTTPStatus.UNAUTHORIZED)
+                return
+            page_id = str(payload.get("page_id") or session.get("notion_page_id") or "").strip()
+            if not page_id:
+                pages = _load_notion_pages(session)
+                if pages:
+                    page_id = pages[0]["id"]
+                    session["notion_page_id"] = page_id
+            if not page_id:
+                self._send_json({"error": "Notion에 기록할 페이지를 찾을 수 없습니다."}, HTTPStatus.BAD_REQUEST)
+                return
+            save_mode = str(payload.get("save_mode") or "page").strip()
+            result = asyncio.run(create_notion_report([], title="AI Agent 코드 리뷰 기록", review=review, checklist=save_mode == "checklist", notion_token=notion_token, notion_page_id=page_id))
             self._send_json(result)
         except Exception as error:
             self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -1330,6 +1607,59 @@ class AppHandler(BaseHTTPRequestHandler):
         session["google_email"] = str(user.get("email") or "")
         self._redirect("/", session_id)
 
+    def _redirect_to_notion_login(self) -> None:
+        client_id = os.environ.get("NOTION_OAUTH_CLIENT_ID", "").strip()
+        if not client_id:
+            self._send_json({"error": "NOTION_OAUTH_CLIENT_ID is required for Notion login."}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        session_id = self._session_id()
+        state = secrets.token_urlsafe(24)
+        OAUTH_STATES[state] = session_id
+        params = urlencode(
+            {
+                "owner": "user",
+                "client_id": client_id,
+                "redirect_uri": _notion_base_url() + "/auth/notion/callback",
+                "response_type": "code",
+                "state": state,
+            }
+        )
+        auth_url = os.environ.get("NOTION_AUTH_URL", "https://api.notion.com/v1/oauth/authorize").strip()
+        self._redirect(f"{auth_url}?{params}", session_id, extra_cookies={"notion_oauth_state": state})
+
+    def _handle_notion_callback(self, query_string: str) -> None:
+        query = parse_qs(query_string)
+        error = (query.get("error") or [""])[0]
+        if error:
+            self._send_json({"error": f"Notion authorization failed: {error}"}, HTTPStatus.BAD_REQUEST)
+            return
+        code = (query.get("code") or [""])[0]
+        state = (query.get("state") or [""])[0]
+        session_id = OAUTH_STATES.pop(state, "")
+        if not session_id and state and self._cookie("notion_oauth_state") == state:
+            session_id = self._session_id()
+        if not code or not session_id:
+            self._send_json({"error": "Invalid Notion OAuth callback."}, HTTPStatus.BAD_REQUEST)
+            return
+        token_payload = _exchange_notion_code(code)
+        access_token = str(token_payload.get("access_token") or "")
+        if not access_token:
+            self._send_json({"error": "Notion OAuth did not return access_token."}, HTTPStatus.BAD_REQUEST)
+            return
+        session = SESSIONS.setdefault(session_id, {})
+        session["notion_access_token"] = access_token
+        if token_payload.get("refresh_token"):
+            session["notion_refresh_token"] = str(token_payload.get("refresh_token"))
+        session["notion_workspace_id"] = str(token_payload.get("workspace_id") or "")
+        session["notion_workspace_name"] = str(token_payload.get("workspace_name") or "Notion")
+        databases = _load_notion_databases(session)
+        pages = _load_notion_pages(session)
+        if databases:
+            session["notion_database_id"] = databases[0]["id"]
+        if pages:
+            session["notion_page_id"] = pages[0]["id"]
+        self._redirect("/", session_id)
+
     def _session_id(self) -> str:
         cookies = self.headers.get("Cookie", "")
         for part in cookies.split(";"):
@@ -1427,8 +1757,13 @@ async def analyze_tasks(
     }
 
 
-async def create_notion_tasks(tasks: list[Any]) -> dict[str, Any]:
-    notion = NotionToolClient()
+async def create_notion_tasks(
+    tasks: list[Any],
+    *,
+    notion_token: str = "",
+    notion_database_id: str = "",
+) -> dict[str, Any]:
+    notion = NotionToolClient(token=notion_token or None, database_id=notion_database_id or None)
     created: list[dict[str, Any]] = []
     selected_tools: list[dict[str, Any]] = []
     async with notion:
@@ -1440,6 +1775,41 @@ async def create_notion_tasks(tasks: list[Any]) -> dict[str, Any]:
             except json.JSONDecodeError:
                 created.append({"created": True, "raw": raw})
     return {"created": created, "selected_tools": selected_tools}
+
+
+async def create_notion_report(
+    tasks: list[Any],
+    *,
+    title: str,
+    body: str = "",
+    review: dict[str, Any] | None = None,
+    checklist: bool = False,
+    notion_token: str = "",
+    notion_page_id: str = "",
+) -> dict[str, Any]:
+    notion = NotionToolClient(token=notion_token or None, database_id="placeholder")
+    normalized_tasks = _normalize_tasks(tasks)
+    selected_tools = [
+        {
+            "tool": "create_notion_report_page",
+            "arguments": {
+                "title": title,
+                "parent_page_id": notion_page_id,
+                "task_count": len(normalized_tasks),
+                "format": "checklist" if checklist else "document",
+            },
+        }
+    ]
+    async with notion:
+        page = notion.create_report_page(
+            parent_page_id=notion_page_id,
+            title=title,
+            body=body,
+            tasks=normalized_tasks,
+            review=review or {},
+            checklist=checklist,
+        )
+    return {"created": [page], "selected_tools": selected_tools, "url": page.get("url", "")}
 
 
 async def create_calendar_events(
@@ -1525,6 +1895,10 @@ def _base_url() -> str:
     return os.environ.get("APP_BASE_URL", "http://127.0.0.1:8787").rstrip("/")
 
 
+def _notion_base_url() -> str:
+    return os.environ.get("NOTION_REDIRECT_BASE_URL", "http://localhost:8787").rstrip("/")
+
+
 def _exchange_github_code(code: str) -> str:
     client_id = os.environ.get("GITHUB_APP_CLIENT_ID", "").strip()
     client_secret = os.environ.get("GITHUB_APP_CLIENT_SECRET", "").strip()
@@ -1593,6 +1967,35 @@ def _exchange_google_code(code: str) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _exchange_notion_code(code: str) -> dict[str, Any]:
+    client_id = os.environ.get("NOTION_OAUTH_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("NOTION_OAUTH_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        raise ValueError("NOTION_OAUTH_CLIENT_ID and NOTION_OAUTH_CLIENT_SECRET are required.")
+    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("ascii")
+    data = json.dumps(
+        {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": _notion_base_url() + "/auth/notion/callback",
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        "https://api.notion.com/v1/oauth/token",
+        data=data,
+        method="POST",
+        headers={
+            "Authorization": f"Basic {credentials}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28",
+            "User-Agent": "github-ai-mcp-agent",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return payload if isinstance(payload, dict) else {}
+
+
 def _google_get_userinfo(access_token: str) -> dict[str, Any]:
     request = urllib.request.Request(
         "https://www.googleapis.com/oauth2/v2/userinfo",
@@ -1624,6 +2027,37 @@ def _friendly_error(error: BaseException) -> str:
         parts = [_friendly_error(item) for item in error.exceptions]
         return "; ".join(part for part in parts if part) or str(error)
     return str(error)
+
+
+def _load_notion_databases(session: dict[str, Any]) -> list[dict[str, str]]:
+    token = str(session.get("notion_access_token") or "")
+    if not token:
+        return []
+    try:
+        databases = NotionToolClient(token=token, database_id="placeholder").list_databases()
+    except Exception:
+        return []
+    selected = str(session.get("notion_database_id") or "")
+    return sorted(
+        databases,
+        key=lambda database: (
+            0 if database.get("id") == selected else 1,
+            0 if any(keyword in database.get("title", "").lower() for keyword in ("task", "todo", "할일", "작업")) else 1,
+            database.get("title", "").lower(),
+        ),
+    )
+
+
+def _load_notion_pages(session: dict[str, Any]) -> list[dict[str, str]]:
+    token = str(session.get("notion_access_token") or "")
+    if not token:
+        return []
+    try:
+        pages = NotionToolClient(token=token, database_id="placeholder").list_pages()
+    except Exception:
+        return []
+    selected = str(session.get("notion_page_id") or "")
+    return sorted(pages, key=lambda page: (0 if page.get("id") == selected else 1, page.get("title", "").lower()))
 
 
 def _load_repositories(session: dict[str, Any] | None = None) -> list[dict[str, str]]:
