@@ -9,6 +9,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+from github_ai_agent.github_app_auth import GitHubAppTokenProvider
 from github_ai_agent.mcp_client import McpTool
 
 
@@ -336,8 +337,35 @@ def _github_request(path: str, token: str, query: dict[str, Any] | None = None) 
         raise ValueError(f"GitHub API error {error.code} for {path}: {body}") from error
 
 
+def _github_write_request(path: str, token: str, method: str, data: dict[str, Any]) -> Any:
+    """POST/PUT counterpart to _github_request, for the branch/commit/PR
+    creation calls used by the web UI's README-update approval flow."""
+
+    url = "https://api.github.com" + path
+    body = json.dumps(data).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method=method,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "github-ai-mcp-agent",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        error_body = error.read().decode("utf-8", errors="replace")
+        raise ValueError(f"GitHub API error {error.code} for {method} {path}: {error_body}") from error
+
+
 MAX_TREE_FILES = 1000
 MAX_FILE_CONTENT_BYTES = 200_000
+MAX_DIFF_CHARS = 12000
 
 
 def fetch_branches(
@@ -409,19 +437,131 @@ def fetch_file_content(
         {"ref": ref},
     )
     if not isinstance(payload, dict):
-        return {"content": "", "too_large": False, "binary": True}
+        return {"content": "", "too_large": False, "binary": True, "sha": ""}
 
+    sha = str(payload.get("sha") or "")
     size = payload.get("size") or 0
     if size > MAX_FILE_CONTENT_BYTES:
-        return {"content": "", "too_large": True, "binary": False}
+        return {"content": "", "too_large": True, "binary": False, "sha": sha}
 
     if payload.get("encoding") != "base64" or not isinstance(payload.get("content"), str):
-        return {"content": "", "too_large": False, "binary": True}
+        return {"content": "", "too_large": False, "binary": True, "sha": sha}
 
     try:
         raw_bytes = base64.b64decode(payload["content"])
         content = raw_bytes.decode("utf-8")
     except (ValueError, UnicodeDecodeError):
-        return {"content": "", "too_large": False, "binary": True}
+        return {"content": "", "too_large": False, "binary": True, "sha": sha}
 
-    return {"content": content, "too_large": False, "binary": False}
+    return {"content": content, "too_large": False, "binary": False, "sha": sha}
+
+
+def fetch_latest_commit_diff(
+    token: str,
+    owner: str,
+    repo: str,
+    branch: str,
+) -> dict[str, Any]:
+    """Diff of the latest commit on `branch`, built from the GitHub API's
+    per-file patches (no local git checkout needed)."""
+
+    payload = _github_request(f"/repos/{owner}/{repo}/commits/{urllib.parse.quote(branch, safe='')}", token)
+    if not isinstance(payload, dict):
+        return {"sha": "", "message": "", "changed_files": [], "diff_text": ""}
+
+    files = payload.get("files", [])
+    files = files if isinstance(files, list) else []
+
+    changed_files = [str(item.get("filename")) for item in files if isinstance(item, dict) and item.get("filename")]
+    diff_parts = []
+    for item in files:
+        if not isinstance(item, dict) or not item.get("patch"):
+            continue
+        filename = item.get("filename", "")
+        diff_parts.append(f"--- {filename}\n+++ {filename}\n{item['patch']}")
+    diff_text = "\n\n".join(diff_parts)
+    if len(diff_text) > MAX_DIFF_CHARS:
+        diff_text = diff_text[:MAX_DIFF_CHARS] + "\n... (diff truncated for length)"
+
+    commit = payload.get("commit") if isinstance(payload.get("commit"), dict) else {}
+    return {
+        "sha": str(payload.get("sha") or ""),
+        "message": str(commit.get("message") or ""),
+        "changed_files": changed_files,
+        "diff_text": diff_text,
+    }
+
+
+def get_branch_head_sha(token: str, owner: str, repo: str, branch: str) -> str:
+    payload = _github_request(f"/repos/{owner}/{repo}/git/ref/heads/{urllib.parse.quote(branch, safe='')}", token)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Could not resolve head sha for branch {branch!r}.")
+    object_info = payload.get("object")
+    sha = object_info.get("sha") if isinstance(object_info, dict) else None
+    if not sha:
+        raise ValueError(f"Could not resolve head sha for branch {branch!r}.")
+    return str(sha)
+
+
+def create_branch(token: str, owner: str, repo: str, new_branch: str, from_sha: str) -> None:
+    _github_write_request(
+        f"/repos/{owner}/{repo}/git/refs",
+        token,
+        "POST",
+        {"ref": f"refs/heads/{new_branch}", "sha": from_sha},
+    )
+
+
+def update_file_content(
+    token: str,
+    owner: str,
+    repo: str,
+    path: str,
+    branch: str,
+    content: str,
+    message: str,
+    sha: str,
+) -> None:
+    _github_write_request(
+        f"/repos/{owner}/{repo}/contents/{urllib.parse.quote(path)}",
+        token,
+        "PUT",
+        {
+            "message": message,
+            "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+            "branch": branch,
+            "sha": sha,
+        },
+    )
+
+
+def create_pull_request(
+    token: str,
+    owner: str,
+    repo: str,
+    title: str,
+    body: str,
+    head: str,
+    base: str,
+) -> dict[str, Any]:
+    payload = _github_write_request(
+        f"/repos/{owner}/{repo}/pulls",
+        token,
+        "POST",
+        {"title": title, "body": body, "head": head, "base": base},
+    )
+    if not isinstance(payload, dict):
+        raise ValueError("Unexpected response creating pull request.")
+    return {"html_url": str(payload.get("html_url") or ""), "number": payload.get("number")}
+
+
+def resolve_github_token(installation_id: str, session_token: str) -> str:
+    provider = GitHubAppTokenProvider(installation_id or None)
+    if provider.enabled:
+        return provider.create_installation_token()
+    if session_token:
+        return session_token
+    env_token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if env_token:
+        return env_token
+    raise ValueError("GitHub 인증 정보가 없습니다. 저장소를 먼저 연결하세요.")

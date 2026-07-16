@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import asyncio
 import json
 import os
@@ -16,12 +17,13 @@ from dotenv import load_dotenv
 
 from github_ai_agent import code_review
 from github_ai_agent.agent import GitHubToolChoosingAgent
-from github_ai_agent.github_app_auth import GitHubAppTokenProvider
+from github_ai_agent.github_app_auth import GitHubAppTokenProvider, resolve_default_repository
 from github_ai_agent.google_calendar_client import GoogleCalendarToolClient
 from github_ai_agent.mcp_client import GitHubMcpClient
 from github_ai_agent.notion_client import NotionToolClient
-from github_ai_agent import session_store
+from github_ai_agent import readme_review
 
+SESSIONS: dict[str, dict[str, Any]] = {}
 OAUTH_STATES: dict[str, str] = {}
 
 HTML = r"""<!doctype html>
@@ -55,6 +57,7 @@ HTML = r"""<!doctype html>
     .shell { display: grid; grid-template-columns: 420px minmax(0, 1fr); min-height: 100vh; }
     aside { border-right: 1px solid var(--line); background: #eef3f6; padding: 24px; }
     main { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 18px; padding: 24px; }
+    .main-header { display: flex; flex-direction: column; gap: 10px; }
     h1 { margin: 0 0 10px; font-size: 24px; line-height: 1.2; letter-spacing: 0; }
     h2 { margin: 0 0 12px; font-size: 16px; letter-spacing: 0; }
     .muted { color: var(--muted); }
@@ -66,11 +69,8 @@ HTML = r"""<!doctype html>
     .repo { padding: 14px; margin: 18px 0; }
     .repo strong { display: block; overflow-wrap: anywhere; }
     .repo select { width: 100%; margin-top: 8px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); }
-    .repo-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .connect-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
     .link-button { display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--accent); border-radius: 8px; padding: 8px 10px; color: #fff; background: var(--accent); text-decoration: none; font-weight: 700; }
-    .logout-button { border-color: #dc2626; background: #dc2626; color: #fff; padding: 6px 10px; font-size: 12px; }
-    .logout-button:hover { background: #b91c1c; }
     .chips, .task-meta, .member-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
     .chip, .tag {
       border-radius: 999px;
@@ -151,6 +151,27 @@ HTML = r"""<!doctype html>
     .tool { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; background: #fbfcfe; }
     pre { margin: 8px 0 0; overflow: auto; border-radius: 8px; background: var(--code); padding: 10px; font-size: 12px; }
     .error { color: var(--warn); font-weight: 700; }
+    .diff-header-row { display: grid; grid-template-columns: 1fr 1fr; font-weight: 700; margin-top: 10px; }
+    .readme-diff-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      max-height: 400px;
+      overflow: auto;
+      margin-top: 8px;
+      border-radius: 8px;
+      background: var(--code);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+    }
+    .readme-diff-grid > div { padding: 1px 8px; overflow-wrap: anywhere; border-left: 1px solid var(--line); }
+    .readme-diff-grid > div:nth-child(odd) { border-left: none; }
+    .diff-add { background: #ecfdf5; color: #166534; }
+    .diff-remove { background: #fef2f2; color: #991b1b; }
+    .diff-empty { background: #eef1f5; }
+    .push-notifications { display: flex; flex-direction: column; gap: 6px; }
+    .push-notification { cursor: pointer; border: 1px solid var(--accent); border-radius: 8px; padding: 8px 12px; background: #ecfdf5; color: var(--accent-dark); font-weight: 700; }
+    .push-notification:hover { background: var(--accent); color: #fff; }
     .tabs { display: flex; gap: 8px; }
     .tab-button { padding: 8px 14px; font-weight: 700; }
     .tab-button.active { border-color: var(--accent); background: var(--accent); color: #fff; }
@@ -181,15 +202,13 @@ HTML = r"""<!doctype html>
       <p class="muted">GitHub MCP/API 기록에서 팀원과 작업 성향을 읽고, 승인된 작업만 Notion과 Google Calendar에 등록합니다.</p>
 
       <div class="repo">
-        <div class="repo-head">
-          <span class="muted">Repository</span>
-          <a class="link-button logout-button" id="logoutButton" href="/auth/logout">로그아웃</a>
-        </div>
+        <span class="muted">Repository</span>
         <strong id="repo">loading...</strong>
         <select id="repoSelect" hidden></select>
         <div class="connect-row">
           <a class="link-button" id="connectGithub" href="/auth/github">GitHub 연결</a>
           <a class="link-button" id="installGithub" href="/auth/github/install" hidden>앱 설치</a>
+          <a class="link-button" id="connectNotion" href="/auth/notion">Notion 연결</a>
           <a class="link-button" id="connectGoogle" href="/auth/google">Google Calendar 연결</a>
         </div>
         <div class="chips">
@@ -198,6 +217,23 @@ HTML = r"""<!doctype html>
           <span class="chip" id="notion">notion</span>
           <span class="chip" id="calendar">calendar</span>
         </div>
+        <label class="field" id="notionDatabaseField" hidden>
+          Notion Database
+          <select id="notionDatabaseSelect"></select>
+        </label>
+        <label class="field" id="notionPageField" hidden>
+          Notion Page
+          <select id="notionPageSelect"></select>
+        </label>
+        <label class="field" id="notionSaveModeField" hidden>
+          Notion 저장 방식
+          <select id="notionSaveMode">
+            <option value="database">DB에 작업 행으로 등록</option>
+            <option value="page">페이지에 분석 기록으로 저장</option>
+            <option value="checklist">페이지에 체크리스트로 저장</option>
+          </select>
+        </label>
+        <button class="example" id="createNotionDatabase" type="button" hidden>Notion 작업 DB 자동 생성</button>
         <div class="members">
           <span class="muted">GitHub IDs</span>
           <div class="member-list" id="members"><span class="chip">loading...</span></div>
@@ -225,9 +261,13 @@ HTML = r"""<!doctype html>
     </aside>
 
     <main>
-      <div class="tabs">
-        <button class="tab-button active" id="tabTaskPlanner" type="button">작업 분배</button>
-        <button class="tab-button" id="tabCodeReview" type="button">코드 리뷰</button>
+      <div class="main-header">
+        <div id="pushNotifications" class="push-notifications"></div>
+        <div class="tabs">
+          <button class="tab-button active" id="tabTaskPlanner" type="button">작업 분배</button>
+          <button class="tab-button" id="tabCodeReview" type="button">코드 리뷰</button>
+          <button class="tab-button" id="tabReadmeUpdate" type="button">README 갱신</button>
+        </div>
       </div>
 
       <div id="taskPlannerView">
@@ -251,8 +291,6 @@ HTML = r"""<!doctype html>
           <section>
             <h2>AI Analysis</h2>
             <div class="answer" id="answer">아직 분석 결과가 없습니다.</div>
-            <h2 style="margin-top:18px;">Selected Tools</h2>
-            <div id="tools" class="muted">AI가 GitHub 분석에 사용한 tool이 여기에 표시됩니다.</div>
           </section>
           <section>
             <h2>Proposed Tasks</h2>
@@ -272,6 +310,7 @@ HTML = r"""<!doctype html>
             <span class="muted" id="reviewStatus">Ready</span>
             <div class="button-row">
               <button class="primary" id="reviewFile" disabled>Review File</button>
+              <button class="approve" id="saveReviewNotion" disabled>Notion에 리뷰 저장</button>
             </div>
           </div>
         </div>
@@ -289,6 +328,36 @@ HTML = r"""<!doctype html>
           </section>
         </div>
       </div>
+
+      <div id="readmeUpdateView" hidden>
+        <div class="composer">
+          <div class="review-select-row">
+            <select id="readmeBranchSelect"><option value="">브랜치를 불러오는 중...</option></select>
+          </div>
+          <div class="actions">
+            <span class="muted" id="readmeStatus">Ready</span>
+            <div class="button-row">
+              <button class="primary" id="analyzeReadme">Analyze README</button>
+              <button class="approve" id="applyReadmeUpdate" disabled>PR 생성</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="results">
+          <section>
+            <h2>판단 결과</h2>
+            <div class="answer" id="readmeVerdict">아직 분석하지 않았습니다.</div>
+          </section>
+          <section>
+            <h2>변경 사항</h2>
+            <div class="diff-header-row">
+              <span>이전 README</span>
+              <span>바뀐 README</span>
+            </div>
+            <div id="readmeDiff" class="readme-diff-grid muted">-</div>
+          </section>
+        </div>
+      </div>
     </main>
   </div>
 
@@ -299,14 +368,20 @@ HTML = r"""<!doctype html>
     const approveNotion = document.querySelector("#approveNotion");
     const approveCalendar = document.querySelector("#approveCalendar");
     const answer = document.querySelector("#answer");
-    const tools = document.querySelector("#tools");
     const tasks = document.querySelector("#tasks");
     const status = document.querySelector("#status");
     const repoSelect = document.querySelector("#repoSelect");
     const connectGithub = document.querySelector("#connectGithub");
     const installGithub = document.querySelector("#installGithub");
+    const connectNotion = document.querySelector("#connectNotion");
+    const notionDatabaseField = document.querySelector("#notionDatabaseField");
+    const notionDatabaseSelect = document.querySelector("#notionDatabaseSelect");
+    const notionPageField = document.querySelector("#notionPageField");
+    const notionPageSelect = document.querySelector("#notionPageSelect");
+    const notionSaveModeField = document.querySelector("#notionSaveModeField");
+    const notionSaveMode = document.querySelector("#notionSaveMode");
+    const createNotionDatabase = document.querySelector("#createNotionDatabase");
     const connectGoogle = document.querySelector("#connectGoogle");
-    const logoutButton = document.querySelector("#logoutButton");
     const googleCalendarLink = document.querySelector("#googleCalendarLink");
     const calendarEvents = document.querySelector("#calendarEvents");
     const calendarListView = document.querySelector("#calendarListView");
@@ -314,16 +389,25 @@ HTML = r"""<!doctype html>
 
     const tabTaskPlanner = document.querySelector("#tabTaskPlanner");
     const tabCodeReview = document.querySelector("#tabCodeReview");
+    const tabReadmeUpdate = document.querySelector("#tabReadmeUpdate");
     const taskPlannerView = document.querySelector("#taskPlannerView");
     const codeReviewView = document.querySelector("#codeReviewView");
+    const readmeUpdateView = document.querySelector("#readmeUpdateView");
     const branchSelect = document.querySelector("#branchSelect");
     const fileFilter = document.querySelector("#fileFilter");
     const fileListEl = document.querySelector("#fileList");
     const reviewFile = document.querySelector("#reviewFile");
+    const saveReviewNotion = document.querySelector("#saveReviewNotion");
     const reviewStatus = document.querySelector("#reviewStatus");
     const reviewSummary = document.querySelector("#reviewSummary");
     const reviewErrors = document.querySelector("#reviewErrors");
     const reviewComments = document.querySelector("#reviewComments");
+    const readmeBranchSelect = document.querySelector("#readmeBranchSelect");
+    const analyzeReadmeButton = document.querySelector("#analyzeReadme");
+    const applyReadmeUpdateButton = document.querySelector("#applyReadmeUpdate");
+    const readmeStatus = document.querySelector("#readmeStatus");
+    const readmeVerdict = document.querySelector("#readmeVerdict");
+    const readmeDiff = document.querySelector("#readmeDiff");
 
     let proposedTasks = [];
     let notionEnabled = false;
@@ -333,6 +417,12 @@ HTML = r"""<!doctype html>
     let currentBranch = "";
     let allFiles = [];
     let selectedFilePath = "";
+    let readmeBranchesLoaded = false;
+    let readmeCurrentBranch = "";
+    let readmeProposal = null;
+    let lastReviewResult = null;
+    let branchShaBaseline = {};
+    let pushPollTimer = null;
     let calendarView = "list";
     let loadedCalendarEvents = [];
 
@@ -348,6 +438,10 @@ HTML = r"""<!doctype html>
       const config = await response.json();
       selectedRepository = readSavedRepository(config);
       renderRepositorySelect(config.repositories || []);
+      if (!selectedRepository.owner || !selectedRepository.repo) {
+        status.textContent = "GitHub 연결 필요";
+        answer.innerHTML = "<span class='error'>GitHub 연결 후 저장소를 선택해야 분석을 시작할 수 있습니다.</span>";
+      }
       connectGithub.textContent = config.github_user ? `@${config.github_user}` : "GitHub 연결";
       connectGoogle.textContent = config.google_user ? `Calendar: ${config.google_user}` : "Google Calendar 연결";
       installGithub.hidden = Boolean((config.repositories || []).length);
@@ -357,6 +451,8 @@ HTML = r"""<!doctype html>
       calendarEnabled = Boolean(config.calendar_enabled);
       document.querySelector("#notion").textContent = notionEnabled ? "notion on" : "notion off";
       document.querySelector("#calendar").textContent = calendarEnabled ? "calendar on" : "calendar off";
+      renderNotionDatabases(config.notion_databases || [], config.notion_database_id || "", Boolean(config.notion_workspace));
+      renderNotionPages(config.notion_pages || [], config.notion_page_id || "", Boolean(config.notion_workspace));
       googleCalendarLink.href = calendarEnabled ? "https://calendar.google.com/calendar/u/0/r" : "/auth/google";
       await loadCalendarEvents();
       renderMembers(config.members || [], config.member_warnings || []);
@@ -364,6 +460,9 @@ HTML = r"""<!doctype html>
         await loadMembers(selectedRepository.owner, selectedRepository.repo);
       }
       refreshApproveButtons();
+      if (selectedRepository.owner && selectedRepository.repo) {
+        startPushPolling();
+      }
     }
 
     async function loadCalendarEvents() {
@@ -383,6 +482,41 @@ HTML = r"""<!doctype html>
       } catch (error) {
         calendarEvents.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
       }
+    }
+
+    function renderNotionDatabases(databases, selectedDatabaseId, notionConnected) {
+      notionDatabaseSelect.innerHTML = "";
+      if (!databases.length) {
+        notionDatabaseField.hidden = true;
+        createNotionDatabase.hidden = !notionConnected;
+      } else {
+        databases.forEach((database) => {
+          const option = document.createElement("option");
+          option.value = database.id;
+          option.textContent = database.title || "Untitled database";
+          option.selected = database.id === selectedDatabaseId;
+          notionDatabaseSelect.appendChild(option);
+        });
+        notionDatabaseField.hidden = false;
+        createNotionDatabase.hidden = !notionConnected;
+      }
+      notionSaveModeField.hidden = !notionConnected;
+    }
+
+    function renderNotionPages(pages, selectedPageId, notionConnected) {
+      notionPageSelect.innerHTML = "";
+      if (!pages.length) {
+        notionPageField.hidden = true;
+        return;
+      }
+      pages.forEach((page) => {
+        const option = document.createElement("option");
+        option.value = page.id;
+        option.textContent = page.title || "Untitled page";
+        option.selected = page.id === selectedPageId;
+        notionPageSelect.appendChild(option);
+      });
+      notionPageField.hidden = false;
     }
 
     function renderCalendarView() {
@@ -438,7 +572,7 @@ HTML = r"""<!doctype html>
       `;
       calendarEvents.appendChild(wrapper);
       const grid = wrapper.querySelector("#miniCalendarGrid");
-      ["?", "?", "?", "?", "?", "?", "?"].forEach((day) => {
+      ["일", "월", "화", "수", "목", "금", "토"].forEach((day) => {
         const label = document.createElement("div");
         label.className = "mini-calendar-day-name";
         label.textContent = day;
@@ -577,25 +711,35 @@ HTML = r"""<!doctype html>
       localStorage.setItem("selectedRepository", JSON.stringify(selectedRepository));
       document.querySelector("#repo").textContent = `${owner}/${repo}`;
       branchesLoaded = false;
+      readmeBranchesLoaded = false;
       await loadMembers(owner, repo);
       if (!codeReviewView.hidden) {
         await loadBranches();
       }
+      if (!readmeUpdateView.hidden) {
+        await loadReadmeBranches();
+      }
+      startPushPolling();
     });
 
     function switchTab(target) {
-      const showCodeReview = target === "codeReview";
-      taskPlannerView.hidden = showCodeReview;
-      codeReviewView.hidden = !showCodeReview;
-      tabTaskPlanner.classList.toggle("active", !showCodeReview);
-      tabCodeReview.classList.toggle("active", showCodeReview);
-      if (showCodeReview && !branchesLoaded) {
+      taskPlannerView.hidden = target !== "taskPlanner";
+      codeReviewView.hidden = target !== "codeReview";
+      readmeUpdateView.hidden = target !== "readmeUpdate";
+      tabTaskPlanner.classList.toggle("active", target === "taskPlanner");
+      tabCodeReview.classList.toggle("active", target === "codeReview");
+      tabReadmeUpdate.classList.toggle("active", target === "readmeUpdate");
+      if (target === "codeReview" && !branchesLoaded) {
         loadBranches();
+      }
+      if (target === "readmeUpdate" && !readmeBranchesLoaded) {
+        loadReadmeBranches();
       }
     }
 
     tabTaskPlanner.addEventListener("click", () => switchTab("taskPlanner"));
     tabCodeReview.addEventListener("click", () => switchTab("codeReview"));
+    tabReadmeUpdate.addEventListener("click", () => switchTab("readmeUpdate"));
 
     async function loadBranches() {
       if (!selectedRepository.owner || !selectedRepository.repo) {
@@ -766,6 +910,8 @@ HTML = r"""<!doctype html>
         reviewSummary.textContent = payload.summary || "요약이 없습니다.";
         renderReviewErrors(payload.errors || []);
         renderReviewComments(payload.comments || []);
+        lastReviewResult = payload;
+        saveReviewNotion.disabled = !notionEnabled;
         reviewStatus.textContent = "Done";
       } catch (error) {
         reviewSummary.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
@@ -778,6 +924,39 @@ HTML = r"""<!doctype html>
     }
 
     reviewFile.addEventListener("click", reviewSelectedFile);
+
+    async function saveReviewToNotion() {
+      if (!lastReviewResult) {
+        reviewStatus.textContent = "리뷰할 파일을 선택하세요.";
+        return;
+      }
+      saveReviewNotion.disabled = true;
+      reviewStatus.textContent = "Saving review to Notion...";
+      try {
+        const response = await fetch("/api/save-review-to-notion", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            review: lastReviewResult,
+            page_id: notionPageSelect.value,
+            save_mode: notionSaveMode.value === "checklist" ? "checklist" : "page",
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Request failed");
+        }
+        const url = payload.url ? `: ${payload.url}` : "";
+        reviewStatus.textContent = `Saved to Notion${url}`;
+      } catch (error) {
+        reviewStatus.textContent = "Error";
+        reviewSummary.innerHTML += `<br><span class="error">${escapeHtml(error.message)}</span>`;
+      } finally {
+        saveReviewNotion.disabled = !notionEnabled || !lastReviewResult;
+      }
+    }
+
+    saveReviewNotion.addEventListener("click", saveReviewToNotion);
 
     async function loadMembers(owner, repo) {
       const params = new URLSearchParams({
@@ -803,6 +982,7 @@ HTML = r"""<!doctype html>
       const hasTasks = proposedTasks.length > 0;
       approveNotion.disabled = !notionEnabled || !hasTasks;
       approveCalendar.disabled = !calendarEnabled || !hasTasks;
+      saveReviewNotion.disabled = !notionEnabled || !lastReviewResult;
     }
 
     function renderMembers(members, warnings) {
@@ -829,17 +1009,7 @@ HTML = r"""<!doctype html>
     }
 
     function renderTools(selectedTools) {
-      if (!selectedTools.length) {
-        tools.innerHTML = "<span class='muted'>선택된 tool이 없습니다.</span>";
-        return;
-      }
-      tools.innerHTML = "";
-      selectedTools.forEach((item, index) => {
-        const div = document.createElement("div");
-        div.className = "tool";
-        div.innerHTML = `<strong>${index + 1}. ${escapeHtml(item.tool)}</strong><pre>${escapeHtml(JSON.stringify(item.arguments || {}, null, 2))}</pre>`;
-        tools.appendChild(div);
-      });
+      return;
     }
 
     function renderTasks(items) {
@@ -882,6 +1052,13 @@ HTML = r"""<!doctype html>
 
     async function analyzeGithub() {
       const text = question.value.trim();
+      if (!selectedRepository.owner || !selectedRepository.repo) {
+        status.textContent = "GitHub 연결 필요";
+        answer.innerHTML = "<span class='error'>먼저 GitHub에 연결하고 분석할 저장소를 선택해주세요.</span>";
+        tasks.innerHTML = "<span class='muted'>저장소가 선택되면 GitHub 기록을 분석할 수 있습니다.</span>";
+        connectGithub.focus();
+        return;
+      }
       if (!text) {
         question.focus();
         return;
@@ -891,7 +1068,6 @@ HTML = r"""<!doctype html>
       approveCalendar.disabled = true;
       status.textContent = "Analyzing GitHub...";
       answer.textContent = "GitHub MCP/API 기록에서 팀원, 작업 성향, 마감일 후보를 분석하는 중입니다.";
-      tools.innerHTML = "<span class='muted'>Tool 선택 대기 중...</span>";
       tasks.innerHTML = "<span class='muted'>할 일 후보 생성 중...</span>";
 
       try {
@@ -917,7 +1093,6 @@ HTML = r"""<!doctype html>
       } catch (error) {
         proposedTasks = [];
         answer.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
-        tools.innerHTML = "<span class='muted'>요청에 실패했습니다.</span>";
         tasks.innerHTML = "<span class='muted'>할 일 후보를 만들지 못했습니다.</span>";
         status.textContent = "Error";
       } finally {
@@ -940,14 +1115,23 @@ HTML = r"""<!doctype html>
         const response = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tasks: items }),
+          body: JSON.stringify({
+            tasks: items,
+            save_mode: notionSaveMode.value,
+            page_id: notionPageSelect.value,
+            answer: answer.textContent,
+          }),
         });
         const payload = await response.json();
         if (!response.ok) {
           throw new Error(payload.error || "Request failed");
         }
         const count = (payload.created || []).length;
-        answer.textContent += `\n\n${successText}: ${count}개`;
+        const links = (payload.created || [])
+          .filter((item) => item.url)
+          .map((item, index) => `<a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">Notion에서 열기 ${index + 1}</a>`)
+          .join("<br>");
+        answer.innerHTML += `<br><br>${escapeHtml(successText)}: ${count}?${links ? "<br>" + links : ""}`;
         renderTools(payload.selected_tools || []);
         status.textContent = "Saved";
       } catch (error) {
@@ -962,11 +1146,42 @@ HTML = r"""<!doctype html>
     analyze.addEventListener("click", analyzeGithub);
     approveNotion.addEventListener("click", () => postSelectedTasks("/api/approve-tasks", "Saving to Notion...", "Notion 등록 완료"));
     approveCalendar.addEventListener("click", () => postSelectedTasks("/api/approve-calendar-events", "Saving to Calendar...", "Calendar 등록 완료"));
-    logoutButton.addEventListener("click", (event) => {
-      event.preventDefault();
-      localStorage.removeItem("selectedRepository");
-      window.location.href = logoutButton.href;
+    notionDatabaseSelect.addEventListener("change", async () => {
+      const databaseId = notionDatabaseSelect.value;
+      if (!databaseId) return;
+      await fetch("/api/select-notion-database", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ database_id: databaseId }),
+      });
+      notionEnabled = true;
+      document.querySelector("#notion").textContent = "notion on";
+      refreshApproveButtons();
     });
+    createNotionDatabase.addEventListener("click", async () => {
+      createNotionDatabase.disabled = true;
+      status.textContent = "Creating Notion database...";
+      try {
+        const response = await fetch("/api/create-notion-database", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: "AI Agent Tasks" }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "Failed to create Notion database");
+        renderNotionDatabases(payload.databases || [], payload.database_id || "", true);
+        notionEnabled = true;
+        document.querySelector("#notion").textContent = "notion on";
+        status.textContent = "Notion database ready";
+        refreshApproveButtons();
+      } catch (error) {
+        status.textContent = "Error";
+        answer.innerHTML += `<br><span class="error">${escapeHtml(error.message)}</span>`;
+      } finally {
+        createNotionDatabase.disabled = false;
+      }
+    });
+
     calendarListView.addEventListener("click", () => {
       calendarView = "list";
       renderCalendarView();
@@ -981,6 +1196,238 @@ HTML = r"""<!doctype html>
         analyzeGithub();
       }
     });
+    async function loadReadmeBranches() {
+      if (!selectedRepository.owner || !selectedRepository.repo) {
+        readmeBranchSelect.innerHTML = "<option value=''>먼저 저장소를 연결하세요</option>";
+        return;
+      }
+      readmeBranchSelect.innerHTML = "<option value=''>브랜치를 불러오는 중...</option>";
+      try {
+        const params = new URLSearchParams({
+          owner: selectedRepository.owner,
+          repo: selectedRepository.repo,
+          installation_id: selectedRepository.installation_id || "",
+        });
+        const response = await fetch(`/api/branches?${params.toString()}`);
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Request failed");
+        }
+        const branches = payload.branches || [];
+        readmeBranchesLoaded = true;
+        if (!branches.length) {
+          readmeBranchSelect.innerHTML = "<option value=''>브랜치가 없습니다</option>";
+          return;
+        }
+        readmeBranchSelect.innerHTML = "";
+        branches.forEach((branch) => {
+          const option = document.createElement("option");
+          option.value = branch.name;
+          option.textContent = branch.name;
+          readmeBranchSelect.appendChild(option);
+        });
+        readmeCurrentBranch = branches[0].name;
+      } catch (error) {
+        readmeBranchSelect.innerHTML = "<option value=''>브랜치를 불러오지 못했습니다</option>";
+        readmeStatus.textContent = error.message;
+      }
+    }
+
+    readmeBranchSelect.addEventListener("change", () => {
+      readmeCurrentBranch = readmeBranchSelect.value;
+      readmeProposal = null;
+      applyReadmeUpdateButton.disabled = true;
+    });
+
+    function renderReadmeDiff(diff, fallbackText) {
+      const rows = diff && diff.length
+        ? diff
+        : (fallbackText || "").split("\n").map((line) => (
+            { left: line, left_type: "equal", right: line, right_type: "equal" }
+          ));
+      if (!rows.length) {
+        readmeDiff.textContent = "-";
+        return;
+      }
+      readmeDiff.innerHTML = rows.map((row) => {
+        const leftCls = row.left_type === "remove" ? "diff-remove" : row.left_type === "empty" ? "diff-empty" : "";
+        const rightCls = row.right_type === "add" ? "diff-add" : row.right_type === "empty" ? "diff-empty" : "";
+        return `<div class="${leftCls}">${escapeHtml(row.left)}</div><div class="${rightCls}">${escapeHtml(row.right)}</div>`;
+      }).join("");
+    }
+
+    function applyReadmeAnalysisResult(branch, payload) {
+      readmeCurrentBranch = branch;
+      renderReadmeDiff(payload.diff, payload.current_readme);
+      if (!payload.relevant) {
+        readmeVerdict.textContent = `이번 최신 커밋(${payload.commit_message || ""})은 README 갱신이 필요하지 않다고 판단했습니다.`;
+        readmeProposal = null;
+        applyReadmeUpdateButton.disabled = true;
+      } else if (!payload.changed) {
+        readmeVerdict.textContent = "관련 변경이지만 재작성 결과가 기존 README와 동일합니다.";
+        readmeProposal = null;
+        applyReadmeUpdateButton.disabled = true;
+      } else {
+        readmeVerdict.textContent = payload.summary || "README 갱신이 필요합니다.";
+        readmeProposal = payload;
+        applyReadmeUpdateButton.disabled = false;
+      }
+    }
+
+    function baselineStorageKey() {
+      return `readmePushBaseline:${selectedRepository.owner}/${selectedRepository.repo}`;
+    }
+
+    function loadBranchShaBaseline() {
+      try {
+        branchShaBaseline = JSON.parse(localStorage.getItem(baselineStorageKey()) || "{}");
+      } catch (_) {
+        branchShaBaseline = {};
+      }
+    }
+
+    function saveBranchShaBaseline() {
+      localStorage.setItem(baselineStorageKey(), JSON.stringify(branchShaBaseline));
+    }
+
+    function addPushNotification(branch, payload) {
+      const el = document.createElement("div");
+      el.className = "push-notification";
+      el.textContent = `push하여 '${branch}'에서 README를 갱신했습니다`;
+      el.addEventListener("click", () => {
+        switchTab("readmeUpdate");
+        readmeBranchSelect.value = branch;
+        applyReadmeAnalysisResult(branch, payload);
+        el.remove();
+      });
+      document.querySelector("#pushNotifications").prepend(el);
+    }
+
+    async function pollBranchPushes() {
+      if (!selectedRepository.owner || !selectedRepository.repo) return;
+      const params = new URLSearchParams({
+        owner: selectedRepository.owner,
+        repo: selectedRepository.repo,
+        installation_id: selectedRepository.installation_id || "",
+      });
+      let branches;
+      try {
+        const response = await fetch(`/api/branches?${params.toString()}`);
+        branches = (await response.json()).branches || [];
+      } catch (_) {
+        return;
+      }
+
+      const isFirstPoll = Object.keys(branchShaBaseline).length === 0;
+      for (const b of branches) {
+        const prevSha = branchShaBaseline[b.name];
+        branchShaBaseline[b.name] = b.sha;
+        if (isFirstPoll || prevSha === b.sha) continue;
+
+        let payload;
+        try {
+          const res = await fetch("/api/analyze-readme", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              owner: selectedRepository.owner,
+              repo: selectedRepository.repo,
+              installation_id: selectedRepository.installation_id || "",
+              branch: b.name,
+            }),
+          });
+          payload = await res.json();
+        } catch (_) {
+          continue;
+        }
+        if (payload && payload.changed) {
+          addPushNotification(b.name, payload);
+        }
+      }
+      saveBranchShaBaseline();
+    }
+
+    function startPushPolling() {
+      if (pushPollTimer) {
+        clearInterval(pushPollTimer);
+      }
+      loadBranchShaBaseline();
+      pollBranchPushes();
+      pushPollTimer = setInterval(pollBranchPushes, 30000);
+    }
+
+    async function analyzeReadme() {
+      if (!readmeCurrentBranch) {
+        readmeStatus.textContent = "브랜치를 먼저 선택하세요";
+        return;
+      }
+      analyzeReadmeButton.disabled = true;
+      applyReadmeUpdateButton.disabled = true;
+      readmeProposal = null;
+      readmeStatus.textContent = "Analyzing...";
+      readmeVerdict.textContent = "분석 중입니다...";
+      readmeDiff.textContent = "-";
+      try {
+        const response = await fetch("/api/analyze-readme", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            owner: selectedRepository.owner,
+            repo: selectedRepository.repo,
+            installation_id: selectedRepository.installation_id || "",
+            branch: readmeCurrentBranch,
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Request failed");
+        }
+        applyReadmeAnalysisResult(readmeCurrentBranch, payload);
+        readmeStatus.textContent = "Done";
+      } catch (error) {
+        readmeVerdict.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+        readmeStatus.textContent = "Error";
+      } finally {
+        analyzeReadmeButton.disabled = false;
+      }
+    }
+
+    async function applyReadmeUpdate() {
+      if (!readmeProposal) {
+        return;
+      }
+      applyReadmeUpdateButton.disabled = true;
+      readmeStatus.textContent = "Creating PR...";
+      try {
+        const response = await fetch("/api/apply-readme-update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            owner: selectedRepository.owner,
+            repo: selectedRepository.repo,
+            installation_id: selectedRepository.installation_id || "",
+            base_branch: readmeCurrentBranch,
+            readme_content: readmeProposal.proposed_readme,
+            summary: readmeProposal.summary,
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Request failed");
+        }
+        readmeVerdict.innerHTML = `PR이 생성되었습니다: <a href="${escapeHtml(payload.pr_url)}" target="_blank" rel="noopener">${escapeHtml(payload.pr_url)}</a>`;
+        readmeStatus.textContent = "PR created";
+        readmeProposal = null;
+      } catch (error) {
+        readmeVerdict.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+        readmeStatus.textContent = "Error";
+        applyReadmeUpdateButton.disabled = false;
+      }
+    }
+
+    analyzeReadmeButton.addEventListener("click", analyzeReadme);
+    applyReadmeUpdateButton.addEventListener("click", applyReadmeUpdate);
+
     loadConfig().catch(() => {
       document.querySelector("#repo").textContent = "config error";
     });
@@ -1016,13 +1463,25 @@ class AppHandler(BaseHTTPRequestHandler):
         if parsed_url.path == "/auth/google/callback":
             self._handle_google_callback(parsed_url.query)
             return
-        if parsed_url.path == "/auth/logout":
-            self._handle_logout()
+        if parsed_url.path == "/auth/notion":
+            self._redirect_to_notion_login()
+            return
+        if parsed_url.path == "/auth/notion/callback":
+            self._handle_notion_callback(parsed_url.query)
             return
         if parsed_url.path == "/api/config":
-            notion = NotionToolClient()
-            calendar = GoogleCalendarToolClient()
             session = self._session()
+            notion_databases = _load_notion_databases(session)
+            notion_pages = _load_notion_pages(session)
+            if session.get("notion_access_token") and not session.get("notion_database_id") and notion_databases:
+                session["notion_database_id"] = notion_databases[0]["id"]
+            if session.get("notion_access_token") and not session.get("notion_page_id") and notion_pages:
+                session["notion_page_id"] = notion_pages[0]["id"]
+            notion = NotionToolClient(
+                token=str(session.get("notion_access_token") or "") or None,
+                database_id=str(session.get("notion_database_id") or "") or None,
+            )
+            calendar = GoogleCalendarToolClient()
             repositories = _load_repositories(session)
             owner, repo, installation_id = _select_default_repository(repositories)
             self._send_json(
@@ -1033,9 +1492,14 @@ class AppHandler(BaseHTTPRequestHandler):
                     "repositories": repositories,
                     "github_user": session.get("github_login", ""),
                     "google_user": session.get("google_email", ""),
+                    "notion_workspace": session.get("notion_workspace_name", ""),
+                    "notion_database_id": session.get("notion_database_id", notion.config.database_id),
+                    "notion_databases": notion_databases,
+                    "notion_page_id": session.get("notion_page_id", ""),
+                    "notion_pages": notion_pages,
                     "model": os.environ.get("OPENAI_MODEL", "gpt-4.1-mini"),
                     "backend": "github-mcp",
-                    "notion_enabled": notion.enabled,
+                    "notion_enabled": notion.enabled or bool(session.get("notion_access_token")),
                     "calendar_enabled": _calendar_enabled_for_session(calendar, session),
                     "calendar_timezone": calendar.config.timezone,
                     "assignee_property": notion.config.assignee_property,
@@ -1071,11 +1535,26 @@ class AppHandler(BaseHTTPRequestHandler):
         if self.path == "/api/approve-tasks":
             self._handle_approve_tasks()
             return
+        if self.path == "/api/select-notion-database":
+            self._handle_select_notion_database()
+            return
+        if self.path == "/api/create-notion-database":
+            self._handle_create_notion_database()
+            return
+        if self.path == "/api/save-review-to-notion":
+            self._handle_save_review_to_notion()
+            return
         if self.path == "/api/approve-calendar-events":
             self._handle_approve_calendar_events()
             return
         if self.path == "/api/review-file":
             self._handle_review_file()
+            return
+        if self.path == "/api/analyze-readme":
+            self._handle_analyze_readme()
+            return
+        if self.path == "/api/apply-readme-update":
+            self._handle_apply_readme_update()
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -1126,10 +1605,120 @@ class AppHandler(BaseHTTPRequestHandler):
         try:
             payload = self._read_json()
             tasks = payload.get("tasks", [])
+            save_mode = str(payload.get("save_mode") or "database").strip()
+            page_id = str(payload.get("page_id") or "").strip()
+            answer_text = str(payload.get("answer") or "").strip()
             if not isinstance(tasks, list) or not tasks:
                 self._send_json({"error": "tasks are required"}, HTTPStatus.BAD_REQUEST)
                 return
-            result = asyncio.run(create_notion_tasks(tasks))
+            session = self._session()
+            notion_token = str(session.get("notion_access_token") or "")
+            notion_database_id = str(session.get("notion_database_id") or "")
+            if not notion_token and not os.environ.get("NOTION_API_KEY") and not os.environ.get("NOTION_TOKEN"):
+                self._send_json({"error": "Notion 연결이 필요합니다."}, HTTPStatus.UNAUTHORIZED)
+                return
+            if save_mode in {"page", "checklist"}:
+                if not notion_token:
+                    self._send_json({"error": "Notion 연결이 필요합니다."}, HTTPStatus.UNAUTHORIZED)
+                    return
+                if not page_id:
+                    pages = _load_notion_pages(session)
+                    if pages:
+                        page_id = pages[0]["id"]
+                        session["notion_page_id"] = page_id
+                if not page_id:
+                    self._send_json({"error": "Notion에 기록할 위치를 찾을 수 없습니다."}, HTTPStatus.BAD_REQUEST)
+                    return
+                result = asyncio.run(
+                    create_notion_report(
+                        tasks,
+                        body=answer_text,
+                        title="AI Agent 작업 분석 기록",
+                        checklist=save_mode == "checklist",
+                        notion_token=notion_token,
+                        notion_page_id=page_id,
+                    )
+                )
+                self._send_json(result)
+                return
+            if notion_token and not notion_database_id:
+                databases = _load_notion_databases(session)
+                if databases:
+                    notion_database_id = databases[0]["id"]
+                    session["notion_database_id"] = notion_database_id
+                else:
+                    notion = NotionToolClient(token=notion_token, database_id="placeholder")
+                    pages = notion.list_pages()
+                    if not pages:
+                        self._send_json({"error": "Notion 데이터베이스를 만들 페이지를 찾을 수 없습니다."}, HTTPStatus.BAD_REQUEST)
+                        return
+                    created_database = notion.create_task_database(parent_page_id=pages[0]["id"], title="AI Agent Tasks")
+                    notion_database_id = created_database["id"]
+                    session["notion_database_id"] = notion_database_id
+            result = asyncio.run(create_notion_tasks(tasks, notion_token=notion_token, notion_database_id=notion_database_id))
+            self._send_json(result)
+        except Exception as error:
+            self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_select_notion_database(self) -> None:
+        try:
+            payload = self._read_json()
+            database_id = str(payload.get("database_id") or "").strip()
+            if not database_id:
+                self._send_json({"error": "database_id is required"}, HTTPStatus.BAD_REQUEST)
+                return
+            self._session()["notion_database_id"] = database_id
+            self._send_json({"selected": True, "database_id": database_id})
+        except Exception as error:
+            self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_create_notion_database(self) -> None:
+        try:
+            session = self._session()
+            token = str(session.get("notion_access_token") or "")
+            if not token:
+                self._send_json({"error": "Notion 연결이 필요합니다."}, HTTPStatus.UNAUTHORIZED)
+                return
+            payload = self._read_json()
+            title = str(payload.get("title") or "AI Agent Tasks").strip()
+            notion = NotionToolClient(token=token, database_id="placeholder")
+            pages = notion.list_pages()
+            if not pages:
+                self._send_json({"error": "Notion 데이터베이스를 만들 페이지를 찾을 수 없습니다."}, HTTPStatus.BAD_REQUEST)
+                return
+            database = notion.create_task_database(parent_page_id=pages[0]["id"], title=title)
+            database_id = database.get("id", "")
+            if not database_id:
+                raise ValueError("Notion database creation did not return an id.")
+            session["notion_database_id"] = database_id
+            databases = _load_notion_databases(session)
+            self._send_json({"created": True, "database_id": database_id, "database": database, "databases": databases})
+        except Exception as error:
+            self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_save_review_to_notion(self) -> None:
+        try:
+            payload = self._read_json()
+            review = payload.get("review")
+            if not isinstance(review, dict):
+                self._send_json({"error": "review is required"}, HTTPStatus.BAD_REQUEST)
+                return
+            session = self._session()
+            notion_token = str(session.get("notion_access_token") or "")
+            if not notion_token:
+                self._send_json({"error": "Notion 연결이 필요합니다."}, HTTPStatus.UNAUTHORIZED)
+                return
+            page_id = str(payload.get("page_id") or session.get("notion_page_id") or "").strip()
+            if not page_id:
+                pages = _load_notion_pages(session)
+                if pages:
+                    page_id = pages[0]["id"]
+                    session["notion_page_id"] = page_id
+            if not page_id:
+                self._send_json({"error": "Notion에 기록할 페이지를 찾을 수 없습니다."}, HTTPStatus.BAD_REQUEST)
+                return
+            save_mode = str(payload.get("save_mode") or "page").strip()
+            result = asyncio.run(create_notion_report([], title="AI Agent 코드 리뷰 기록", review=review, checklist=save_mode == "checklist", notion_token=notion_token, notion_page_id=page_id))
             self._send_json(result)
         except Exception as error:
             self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -1211,6 +1800,63 @@ class AppHandler(BaseHTTPRequestHandler):
         except Exception as error:
             self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
+    def _handle_analyze_readme(self) -> None:
+        try:
+            payload = self._read_json()
+            owner = str(payload.get("owner", "")).strip()
+            repo = str(payload.get("repo", "")).strip()
+            installation_id = str(payload.get("installation_id", "")).strip()
+            branch = str(payload.get("branch", "")).strip()
+            if not owner or not repo or not branch:
+                self._send_json(
+                    {"error": "owner, repo, branch are required"}, HTTPStatus.BAD_REQUEST
+                )
+                return
+            session_token = str(self._session().get("github_access_token") or "")
+            result = asyncio.run(
+                readme_review.analyze_readme_update(
+                    owner,
+                    repo,
+                    branch,
+                    installation_id=installation_id,
+                    session_token=session_token,
+                )
+            )
+            self._send_json(result)
+        except Exception as error:
+            self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_apply_readme_update(self) -> None:
+        try:
+            payload = self._read_json()
+            owner = str(payload.get("owner", "")).strip()
+            repo = str(payload.get("repo", "")).strip()
+            installation_id = str(payload.get("installation_id", "")).strip()
+            base_branch = str(payload.get("base_branch", "")).strip()
+            readme_content = str(payload.get("readme_content", ""))
+            summary = str(payload.get("summary", ""))
+            if not owner or not repo or not base_branch or not readme_content:
+                self._send_json(
+                    {"error": "owner, repo, base_branch, readme_content are required"},
+                    HTTPStatus.BAD_REQUEST,
+                )
+                return
+            session_token = str(self._session().get("github_access_token") or "")
+            result = asyncio.run(
+                readme_review.apply_readme_update(
+                    owner,
+                    repo,
+                    base_branch,
+                    readme_content,
+                    summary,
+                    installation_id=installation_id,
+                    session_token=session_token,
+                )
+            )
+            self._send_json(result)
+        except Exception as error:
+            self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
     def _handle_approve_calendar_events(self) -> None:
         try:
             payload = self._read_json()
@@ -1267,7 +1913,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
         token = _exchange_github_code(code)
         user = _github_get("/user", token)
-        session = session_store.get_or_create(session_id)
+        session = SESSIONS.setdefault(session_id, {})
         session["github_access_token"] = token
         session["github_login"] = str(user.get("login") or "")
         self._redirect("/", session_id)
@@ -1288,7 +1934,7 @@ class AppHandler(BaseHTTPRequestHandler):
         installation_id = (query.get("installation_id") or [""])[0].strip()
         session_id = self._session_id()
         if installation_id:
-            session_store.get_or_create(session_id)["installation_id"] = installation_id
+            SESSIONS.setdefault(session_id, {})["installation_id"] = installation_id
         self._redirect("/", session_id)
 
     def _redirect_to_google_login(self) -> None:
@@ -1340,16 +1986,64 @@ class AppHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Google OAuth did not return access_token."}, HTTPStatus.BAD_REQUEST)
             return
         user = _google_get_userinfo(access_token)
-        session = session_store.get_or_create(session_id)
+        session = SESSIONS.setdefault(session_id, {})
         session["google_access_token"] = access_token
         if token_payload.get("refresh_token"):
             session["google_refresh_token"] = str(token_payload.get("refresh_token"))
         session["google_email"] = str(user.get("email") or "")
         self._redirect("/", session_id)
 
-    def _handle_logout(self) -> None:
+    def _redirect_to_notion_login(self) -> None:
+        client_id = os.environ.get("NOTION_OAUTH_CLIENT_ID", "").strip()
+        if not client_id:
+            self._send_json({"error": "NOTION_OAUTH_CLIENT_ID is required for Notion login."}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
         session_id = self._session_id()
-        session_store.clear(session_id)
+        state = secrets.token_urlsafe(24)
+        OAUTH_STATES[state] = session_id
+        params = urlencode(
+            {
+                "owner": "user",
+                "client_id": client_id,
+                "redirect_uri": _notion_base_url() + "/auth/notion/callback",
+                "response_type": "code",
+                "state": state,
+            }
+        )
+        auth_url = os.environ.get("NOTION_AUTH_URL", "https://api.notion.com/v1/oauth/authorize").strip()
+        self._redirect(f"{auth_url}?{params}", session_id, extra_cookies={"notion_oauth_state": state})
+
+    def _handle_notion_callback(self, query_string: str) -> None:
+        query = parse_qs(query_string)
+        error = (query.get("error") or [""])[0]
+        if error:
+            self._send_json({"error": f"Notion authorization failed: {error}"}, HTTPStatus.BAD_REQUEST)
+            return
+        code = (query.get("code") or [""])[0]
+        state = (query.get("state") or [""])[0]
+        session_id = OAUTH_STATES.pop(state, "")
+        if not session_id and state and self._cookie("notion_oauth_state") == state:
+            session_id = self._session_id()
+        if not code or not session_id:
+            self._send_json({"error": "Invalid Notion OAuth callback."}, HTTPStatus.BAD_REQUEST)
+            return
+        token_payload = _exchange_notion_code(code)
+        access_token = str(token_payload.get("access_token") or "")
+        if not access_token:
+            self._send_json({"error": "Notion OAuth did not return access_token."}, HTTPStatus.BAD_REQUEST)
+            return
+        session = SESSIONS.setdefault(session_id, {})
+        session["notion_access_token"] = access_token
+        if token_payload.get("refresh_token"):
+            session["notion_refresh_token"] = str(token_payload.get("refresh_token"))
+        session["notion_workspace_id"] = str(token_payload.get("workspace_id") or "")
+        session["notion_workspace_name"] = str(token_payload.get("workspace_name") or "Notion")
+        databases = _load_notion_databases(session)
+        pages = _load_notion_pages(session)
+        if databases:
+            session["notion_database_id"] = databases[0]["id"]
+        if pages:
+            session["notion_page_id"] = pages[0]["id"]
         self._redirect("/", session_id)
 
     def _session_id(self) -> str:
@@ -1357,11 +2051,14 @@ class AppHandler(BaseHTTPRequestHandler):
         for part in cookies.split(";"):
             name, _, value = part.strip().partition("=")
             if name == "github_ai_agent_session" and value:
+                SESSIONS.setdefault(value, {})
                 return value
-        return secrets.token_urlsafe(24)
+        session_id = secrets.token_urlsafe(24)
+        SESSIONS.setdefault(session_id, {})
+        return session_id
 
-    def _session(self) -> session_store.SessionProxy:
-        return session_store.get_or_create(self._session_id())
+    def _session(self) -> dict[str, Any]:
+        return SESSIONS.setdefault(self._session_id(), {})
 
     def _cookie(self, cookie_name: str) -> str:
         cookies = self.headers.get("Cookie", "")
@@ -1446,8 +2143,13 @@ async def analyze_tasks(
     }
 
 
-async def create_notion_tasks(tasks: list[Any]) -> dict[str, Any]:
-    notion = NotionToolClient()
+async def create_notion_tasks(
+    tasks: list[Any],
+    *,
+    notion_token: str = "",
+    notion_database_id: str = "",
+) -> dict[str, Any]:
+    notion = NotionToolClient(token=notion_token or None, database_id=notion_database_id or None)
     created: list[dict[str, Any]] = []
     selected_tools: list[dict[str, Any]] = []
     async with notion:
@@ -1459,6 +2161,41 @@ async def create_notion_tasks(tasks: list[Any]) -> dict[str, Any]:
             except json.JSONDecodeError:
                 created.append({"created": True, "raw": raw})
     return {"created": created, "selected_tools": selected_tools}
+
+
+async def create_notion_report(
+    tasks: list[Any],
+    *,
+    title: str,
+    body: str = "",
+    review: dict[str, Any] | None = None,
+    checklist: bool = False,
+    notion_token: str = "",
+    notion_page_id: str = "",
+) -> dict[str, Any]:
+    notion = NotionToolClient(token=notion_token or None, database_id="placeholder")
+    normalized_tasks = _normalize_tasks(tasks)
+    selected_tools = [
+        {
+            "tool": "create_notion_report_page",
+            "arguments": {
+                "title": title,
+                "parent_page_id": notion_page_id,
+                "task_count": len(normalized_tasks),
+                "format": "checklist" if checklist else "document",
+            },
+        }
+    ]
+    async with notion:
+        page = notion.create_report_page(
+            parent_page_id=notion_page_id,
+            title=title,
+            body=body,
+            tasks=normalized_tasks,
+            review=review or {},
+            checklist=checklist,
+        )
+    return {"created": [page], "selected_tools": selected_tools, "url": page.get("url", "")}
 
 
 async def create_calendar_events(
@@ -1544,6 +2281,10 @@ def _base_url() -> str:
     return os.environ.get("APP_BASE_URL", "http://127.0.0.1:8787").rstrip("/")
 
 
+def _notion_base_url() -> str:
+    return os.environ.get("NOTION_REDIRECT_BASE_URL", "http://localhost:8787").rstrip("/")
+
+
 def _exchange_github_code(code: str) -> str:
     client_id = os.environ.get("GITHUB_APP_CLIENT_ID", "").strip()
     client_secret = os.environ.get("GITHUB_APP_CLIENT_SECRET", "").strip()
@@ -1612,6 +2353,35 @@ def _exchange_google_code(code: str) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _exchange_notion_code(code: str) -> dict[str, Any]:
+    client_id = os.environ.get("NOTION_OAUTH_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("NOTION_OAUTH_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        raise ValueError("NOTION_OAUTH_CLIENT_ID and NOTION_OAUTH_CLIENT_SECRET are required.")
+    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("ascii")
+    data = json.dumps(
+        {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": _notion_base_url() + "/auth/notion/callback",
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        "https://api.notion.com/v1/oauth/token",
+        data=data,
+        method="POST",
+        headers={
+            "Authorization": f"Basic {credentials}",
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28",
+            "User-Agent": "github-ai-mcp-agent",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    return payload if isinstance(payload, dict) else {}
+
+
 def _google_get_userinfo(access_token: str) -> dict[str, Any]:
     request = urllib.request.Request(
         "https://www.googleapis.com/oauth2/v2/userinfo",
@@ -1645,19 +2415,48 @@ def _friendly_error(error: BaseException) -> str:
     return str(error)
 
 
+def _load_notion_databases(session: dict[str, Any]) -> list[dict[str, str]]:
+    token = str(session.get("notion_access_token") or "")
+    if not token:
+        return []
+    try:
+        databases = NotionToolClient(token=token, database_id="placeholder").list_databases()
+    except Exception:
+        return []
+    selected = str(session.get("notion_database_id") or "")
+    return sorted(
+        databases,
+        key=lambda database: (
+            0 if database.get("id") == selected else 1,
+            0 if any(keyword in database.get("title", "").lower() for keyword in ("task", "todo", "할일", "작업")) else 1,
+            database.get("title", "").lower(),
+        ),
+    )
+
+
+def _load_notion_pages(session: dict[str, Any]) -> list[dict[str, str]]:
+    token = str(session.get("notion_access_token") or "")
+    if not token:
+        return []
+    try:
+        pages = NotionToolClient(token=token, database_id="placeholder").list_pages()
+    except Exception:
+        return []
+    selected = str(session.get("notion_page_id") or "")
+    return sorted(pages, key=lambda page: (0 if page.get("id") == selected else 1, page.get("title", "").lower()))
+
+
 def _load_repositories(session: dict[str, Any] | None = None) -> list[dict[str, str]]:
     session = session or {}
     user_token = str(session.get("github_access_token") or "")
     if user_token:
         return _load_user_installation_repositories(user_token)
 
-    installation_id = str(session.get("installation_id") or "")
-    if not installation_id:
-        return []
-    provider = GitHubAppTokenProvider(installation_id)
+    provider = GitHubAppTokenProvider()
     if not provider.enabled:
         return []
     repositories = provider.list_installation_repositories()
+    installation_id = provider.config.installation_id
     return _format_repositories(repositories, installation_id)
 
 
@@ -1703,10 +2502,11 @@ def _format_repositories(
 
 
 def _select_default_repository(repositories: list[dict[str, str]]) -> tuple[str, str, str]:
-    if not repositories:
-        return "", "", ""
-    first = repositories[0]
-    return first.get("owner", ""), first.get("repo", ""), first.get("installation_id", "")
+    if repositories:
+        first = repositories[0]
+        return first.get("owner", ""), first.get("repo", ""), first.get("installation_id", "")
+    owner, repo = resolve_default_repository()
+    return owner, repo, os.environ.get("GITHUB_APP_INSTALLATION_ID", "")
 
 
 def _load_config_members(owner: str, repo: str, installation_id: str = "") -> dict[str, Any]:
