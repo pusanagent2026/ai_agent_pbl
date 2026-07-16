@@ -150,8 +150,27 @@ HTML = r"""<!doctype html>
     .tool { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; background: #fbfcfe; }
     pre { margin: 8px 0 0; overflow: auto; border-radius: 8px; background: var(--code); padding: 10px; font-size: 12px; }
     .error { color: var(--warn); font-weight: 700; }
+    .diff-header-row { display: grid; grid-template-columns: 1fr 1fr; font-weight: 700; margin-top: 10px; }
+    .readme-diff-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      max-height: 400px;
+      overflow: auto;
+      margin-top: 8px;
+      border-radius: 8px;
+      background: var(--code);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+    }
+    .readme-diff-grid > div { padding: 1px 8px; overflow-wrap: anywhere; border-left: 1px solid var(--line); }
+    .readme-diff-grid > div:nth-child(odd) { border-left: none; }
     .diff-add { background: #ecfdf5; color: #166534; }
     .diff-remove { background: #fef2f2; color: #991b1b; }
+    .diff-empty { background: #eef1f5; }
+    .push-notifications { display: flex; flex-direction: column; gap: 6px; }
+    .push-notification { cursor: pointer; border: 1px solid var(--accent); border-radius: 8px; padding: 8px 12px; background: #ecfdf5; color: var(--accent-dark); font-weight: 700; }
+    .push-notification:hover { background: var(--accent); color: #fff; }
     .tabs { display: flex; gap: 8px; }
     .tab-button { padding: 8px 14px; font-weight: 700; }
     .tab-button.active { border-color: var(--accent); background: var(--accent); color: #fff; }
@@ -241,6 +260,7 @@ HTML = r"""<!doctype html>
     </aside>
 
     <main>
+      <div id="pushNotifications" class="push-notifications"></div>
       <div class="tabs">
         <button class="tab-button active" id="tabTaskPlanner" type="button">작업 분배</button>
         <button class="tab-button" id="tabCodeReview" type="button">코드 리뷰</button>
@@ -327,7 +347,11 @@ HTML = r"""<!doctype html>
           </section>
           <section>
             <h2>변경 사항</h2>
-            <pre id="readmeDiff" class="muted" style="white-space:pre-wrap;max-height:400px;">-</pre>
+            <div class="diff-header-row">
+              <span>이전 README</span>
+              <span>바뀐 README</span>
+            </div>
+            <div id="readmeDiff" class="readme-diff-grid muted">-</div>
           </section>
         </div>
       </div>
@@ -390,13 +414,12 @@ HTML = r"""<!doctype html>
     let currentBranch = "";
     let allFiles = [];
     let selectedFilePath = "";
-<<<<<<< HEAD
     let readmeBranchesLoaded = false;
     let readmeCurrentBranch = "";
     let readmeProposal = null;
-=======
     let lastReviewResult = null;
->>>>>>> 2a1c1985d0f87104b616d9facf9e684a4710e80f
+    let branchShaBaseline = {};
+    let pushPollTimer = null;
     let calendarView = "list";
     let loadedCalendarEvents = [];
 
@@ -434,6 +457,9 @@ HTML = r"""<!doctype html>
         await loadMembers(selectedRepository.owner, selectedRepository.repo);
       }
       refreshApproveButtons();
+      if (selectedRepository.owner && selectedRepository.repo) {
+        startPushPolling();
+      }
     }
 
     async function loadCalendarEvents() {
@@ -690,6 +716,7 @@ HTML = r"""<!doctype html>
       if (!readmeUpdateView.hidden) {
         await loadReadmeBranches();
       }
+      startPushPolling();
     });
 
     function switchTab(target) {
@@ -1210,15 +1237,120 @@ HTML = r"""<!doctype html>
     });
 
     function renderReadmeDiff(diff, fallbackText) {
-      if (!diff || !diff.length) {
-        readmeDiff.textContent = fallbackText || "-";
+      const rows = diff && diff.length
+        ? diff
+        : (fallbackText || "").split("\n").map((line) => (
+            { left: line, left_type: "equal", right: line, right_type: "equal" }
+          ));
+      if (!rows.length) {
+        readmeDiff.textContent = "-";
         return;
       }
-      readmeDiff.innerHTML = diff.map((line) => {
-        const prefix = line.type === "add" ? "+ " : line.type === "remove" ? "- " : "  ";
-        const cls = line.type === "add" ? "diff-add" : line.type === "remove" ? "diff-remove" : "";
-        return `<div class="${cls}">${escapeHtml(prefix + line.text)}</div>`;
+      readmeDiff.innerHTML = rows.map((row) => {
+        const leftCls = row.left_type === "remove" ? "diff-remove" : row.left_type === "empty" ? "diff-empty" : "";
+        const rightCls = row.right_type === "add" ? "diff-add" : row.right_type === "empty" ? "diff-empty" : "";
+        return `<div class="${leftCls}">${escapeHtml(row.left)}</div><div class="${rightCls}">${escapeHtml(row.right)}</div>`;
       }).join("");
+    }
+
+    function applyReadmeAnalysisResult(branch, payload) {
+      readmeCurrentBranch = branch;
+      renderReadmeDiff(payload.diff, payload.current_readme);
+      if (!payload.relevant) {
+        readmeVerdict.textContent = `이번 최신 커밋(${payload.commit_message || ""})은 README 갱신이 필요하지 않다고 판단했습니다.`;
+        readmeProposal = null;
+        applyReadmeUpdateButton.disabled = true;
+      } else if (!payload.changed) {
+        readmeVerdict.textContent = "관련 변경이지만 재작성 결과가 기존 README와 동일합니다.";
+        readmeProposal = null;
+        applyReadmeUpdateButton.disabled = true;
+      } else {
+        readmeVerdict.textContent = payload.summary || "README 갱신이 필요합니다.";
+        readmeProposal = payload;
+        applyReadmeUpdateButton.disabled = false;
+      }
+    }
+
+    function baselineStorageKey() {
+      return `readmePushBaseline:${selectedRepository.owner}/${selectedRepository.repo}`;
+    }
+
+    function loadBranchShaBaseline() {
+      try {
+        branchShaBaseline = JSON.parse(localStorage.getItem(baselineStorageKey()) || "{}");
+      } catch (_) {
+        branchShaBaseline = {};
+      }
+    }
+
+    function saveBranchShaBaseline() {
+      localStorage.setItem(baselineStorageKey(), JSON.stringify(branchShaBaseline));
+    }
+
+    function addPushNotification(branch, payload) {
+      const el = document.createElement("div");
+      el.className = "push-notification";
+      el.textContent = `push하여 '${branch}'에서 README를 갱신했습니다`;
+      el.addEventListener("click", () => {
+        switchTab("readmeUpdate");
+        readmeBranchSelect.value = branch;
+        applyReadmeAnalysisResult(branch, payload);
+        el.remove();
+      });
+      document.querySelector("#pushNotifications").prepend(el);
+    }
+
+    async function pollBranchPushes() {
+      if (!selectedRepository.owner || !selectedRepository.repo) return;
+      const params = new URLSearchParams({
+        owner: selectedRepository.owner,
+        repo: selectedRepository.repo,
+        installation_id: selectedRepository.installation_id || "",
+      });
+      let branches;
+      try {
+        const response = await fetch(`/api/branches?${params.toString()}`);
+        branches = (await response.json()).branches || [];
+      } catch (_) {
+        return;
+      }
+
+      const isFirstPoll = Object.keys(branchShaBaseline).length === 0;
+      for (const b of branches) {
+        const prevSha = branchShaBaseline[b.name];
+        branchShaBaseline[b.name] = b.sha;
+        if (isFirstPoll || prevSha === b.sha) continue;
+
+        let payload;
+        try {
+          const res = await fetch("/api/analyze-readme", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              owner: selectedRepository.owner,
+              repo: selectedRepository.repo,
+              installation_id: selectedRepository.installation_id || "",
+              branch: b.name,
+            }),
+          });
+          payload = await res.json();
+        } catch (_) {
+          continue;
+        }
+        if (payload && payload.changed) {
+          addPushNotification(b.name, payload);
+        }
+      }
+      saveBranchShaBaseline();
+    }
+
+    function startPushPolling() {
+      if (pushPollTimer) {
+        clearInterval(pushPollTimer);
+      }
+      loadBranchShaBaseline();
+      pollBranchPushes();
+      pushPollTimer = setInterval(pollBranchPushes, 30000);
     }
 
     async function analyzeReadme() {
@@ -1247,16 +1379,7 @@ HTML = r"""<!doctype html>
         if (!response.ok) {
           throw new Error(payload.error || "Request failed");
         }
-        renderReadmeDiff(payload.diff, payload.current_readme);
-        if (!payload.relevant) {
-          readmeVerdict.textContent = `이번 최신 커밋(${payload.commit_message || ""})은 README 갱신이 필요하지 않다고 판단했습니다.`;
-        } else if (!payload.changed) {
-          readmeVerdict.textContent = "관련 변경이지만 재작성 결과가 기존 README와 동일합니다.";
-        } else {
-          readmeVerdict.textContent = payload.summary || "README 갱신이 필요합니다.";
-          readmeProposal = payload;
-          applyReadmeUpdateButton.disabled = false;
-        }
+        applyReadmeAnalysisResult(readmeCurrentBranch, payload);
         readmeStatus.textContent = "Done";
       } catch (error) {
         readmeVerdict.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;

@@ -30,19 +30,35 @@ PR_TITLE = "docs: README 자동 최신화"
 
 
 def _build_line_diff(current: str, proposed: str) -> list[dict[str, str]]:
+    """Side-by-side diff rows: each row pairs a line from the old README
+    (left) with a line from the new one (right) so both stay visible at
+    once, instead of one interleaved unified list.
+    """
     current_lines = current.splitlines()
     proposed_lines = proposed.splitlines()
     matcher = difflib.SequenceMatcher(None, current_lines, proposed_lines)
-    lines: list[dict[str, str]] = []
+    rows: list[dict[str, str]] = []
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
         if tag == "equal":
-            lines.extend({"type": "equal", "text": t} for t in current_lines[i1:i2])
+            for left, right in zip(current_lines[i1:i2], proposed_lines[j1:j2]):
+                rows.append(
+                    {"left": left, "left_type": "equal", "right": right, "right_type": "equal"}
+                )
             continue
-        if tag in ("delete", "replace"):
-            lines.extend({"type": "remove", "text": t} for t in current_lines[i1:i2])
-        if tag in ("insert", "replace"):
-            lines.extend({"type": "add", "text": t} for t in proposed_lines[j1:j2])
-    return lines
+        left_slice = current_lines[i1:i2]
+        right_slice = proposed_lines[j1:j2]
+        for idx in range(max(len(left_slice), len(right_slice))):
+            has_left = idx < len(left_slice)
+            has_right = idx < len(right_slice)
+            rows.append(
+                {
+                    "left": left_slice[idx] if has_left else "",
+                    "left_type": "remove" if has_left else "empty",
+                    "right": right_slice[idx] if has_right else "",
+                    "right_type": "add" if has_right else "empty",
+                }
+            )
+    return rows
 
 
 async def analyze_readme_update(
