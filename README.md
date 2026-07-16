@@ -172,16 +172,13 @@ src/github_ai_agent/
 
 README는 단순 코드 수정마다 갱신하지 않고, 사용자에게 보이는 기능, 실행 방법, 설정값, 외부 연동, 권한 요구사항이 바뀔 때 갱신합니다.
 
-## README 자동 업데이트 봇 설정
+## README 자동 업데이트 (웹 UI)
 
-`main`에 push되면 `.github/workflows/readme-autoupdate.yml`이 변경 diff를 분석해 위 원칙에 해당하는 변경인지 판단하고, 필요한 경우에만 새 브랜치(`docs/auto-update-readme-<run number>`)에 커밋한 뒤 PR을 자동으로 엽니다. main에는 직접 커밋하지 않으며, 병합은 항상 사람이 직접 검토 후 진행합니다.
+README 판단/재작성은 더 이상 별도 GitHub Actions 워크플로가 아니라 **웹 UI가 켜져 있는 동안** 처리합니다. "README 갱신" 탭을 열어두면 30초마다 저장소의 모든 브랜치를 폴링하고:
 
-1차(관련성 판단, `gpt-4o-mini`)와 2차(재작성, `gpt-4o`) 모델은 워크플로 파일 상단의 `README_FILTER_MODEL`, `README_REWRITE_MODEL` 환경변수로 바꿀 수 있습니다.
+- `main`이 아닌 브랜치는 push로 새 커밋이 생기고 실제로 README 갱신이 필요한 경우에만 알림이 뜹니다.
+- `main`은 PR이 머지되어 sha가 바뀔 때마다 **판단 결과와 무관하게 항상** 알림이 뜹니다 ("갱신 필요" / "변경 사항 없음" / "README와 무관한 변경" 세 가지 문구로 구분).
 
-설정 방법:
+알림을 클릭하면 이전 README ↔ 바뀐 README의 좌우 diff와 판단 결과가 표시됩니다. 실제로 PR을 열려면 반드시 **"PR 생성" 버튼을 직접 눌러야** 합니다 — 자동으로 PR이 열리는 단계는 없습니다.
 
-1. GitHub 저장소 `Settings` → `Secrets and variables` → `Actions` → `New repository secret`에서 `OPENAI_API_KEY`를 등록합니다.
-2. `Settings` → `Actions` → `General` → `Workflow permissions`에서 "Read and write permissions"를 켭니다(워크플로가 브랜치를 push하고 PR을 열 수 있어야 합니다).
-3. 별도 설정 없이 `main`에 push하면 자동 실행되며, `workflow_dispatch`로 Actions 탭에서 수동 실행도 가능합니다.
-
-웹 UI의 "README 갱신" 탭에서도 같은 판단/재작성 로직을 수동으로 실행할 수 있습니다. 브랜치를 고르고 "Analyze README"를 누르면 그 브랜치의 최신 커밋을 분석하고, "PR 생성"을 누르면 같은 방식으로 새 브랜치 + PR을 만듭니다(이때는 GitHub App의 Contents/Pull requests 쓰기 권한이 필요합니다 — 위 "GitHub App 만들기"의 권장 권한 참고).
+브랜치를 고르고 "Analyze README"를 눌러 수동으로 특정 브랜치의 최신 커밋을 분석할 수도 있습니다. 1차(관련성 판단, `gpt-4o-mini`)와 2차(재작성, `gpt-4o`) 모델은 `README_FILTER_MODEL`, `README_REWRITE_MODEL` 환경변수로 바꿀 수 있습니다. PR 생성에는 GitHub App의 Contents/Pull requests 쓰기 권한이 필요합니다 — 위 "GitHub App 만들기"의 권장 권한 참고.
