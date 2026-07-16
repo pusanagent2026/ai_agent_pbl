@@ -85,7 +85,7 @@
       font: inherit;
     }
     .repo select { margin-top: 10px; padding: 10px 11px; }
-    .connect-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+    .connect-row { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 12px; }
     .link-button {
       display: inline-flex;
       align-items: center;
@@ -101,6 +101,68 @@
       text-align: center;
     }
     .link-button:hover { background: var(--accent-dark); }
+    .service-card {
+      display: grid;
+      grid-template-columns: 46px minmax(0, 1fr) 78px;
+      align-items: center;
+      column-gap: 10px;
+      min-height: 46px;
+      padding: 8px 14px;
+      border-color: var(--line);
+      background: #fff;
+      color: var(--text);
+      box-shadow: 0 8px 20px rgba(37, 53, 67, 0.04);
+    }
+    .service-card:hover {
+      background: #fff;
+      border-color: #cbd5df;
+      transform: translateY(-1px);
+    }
+    .service-icon {
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 28px;
+      border-radius: 6px;
+      background: #f5f7f9;
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 950;
+      letter-spacing: 0;
+    }
+    .github-card .service-icon { background: #fff; color: #111827; }
+    .notion-card .service-icon { background: #fff; border: 1px solid #111827; color: #111827; }
+    .calendar-card .service-icon { background: #eef6ff; color: #2563eb; }
+    .service-label {
+      min-width: 0;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 14px;
+      font-weight: 850;
+      text-align: left;
+    }
+    .service-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      justify-self: start;
+      color: #64748b;
+      font-size: 12px;
+      font-weight: 850;
+      white-space: nowrap;
+    }
+    .service-status::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: #cbd5df;
+    }
+    .service-card.is-connected .service-status { color: #2f9f6b; }
+    .service-card.is-connected .service-status::before { background: #35b86f; }
     .chips, .task-meta, .member-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
     .chip, .tag {
       border-radius: 999px;
@@ -334,10 +396,22 @@
 
     .brand-block {
       display: grid;
-      grid-template-columns: 52px minmax(0, 1fr);
-      gap: 13px;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 8px;
       align-items: start;
       padding: 4px 0 2px;
+    }
+    .brand-block h1 {
+      max-width: none;
+      font-size: 24px;
+      word-break: keep-all;
+      white-space: nowrap;
+    }
+    .brand-block .muted {
+      max-width: 260px;
+      line-height: 1.65;
+      word-break: keep-all;
+      overflow-wrap: normal;
     }
     .brand-mark {
       width: 52px;

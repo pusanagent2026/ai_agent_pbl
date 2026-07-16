@@ -9,7 +9,6 @@ const question = document.querySelector("#question");
     const status = document.querySelector("#status");
     const repoSelect = document.querySelector("#repoSelect");
     const connectGithub = document.querySelector("#connectGithub");
-    const installGithub = document.querySelector("#installGithub");
     const connectNotion = document.querySelector("#connectNotion");
     const notionDatabaseField = document.querySelector("#notionDatabaseField");
     const notionDatabaseSelect = document.querySelector("#notionDatabaseSelect");
@@ -64,6 +63,8 @@ const question = document.querySelector("#question");
     let pushPollTimer = null;
     let calendarView = "list";
     let loadedCalendarEvents = [];
+    let lastUserQuestion = "";
+    let currentNotionSaveMode = "database";
 
     document.querySelectorAll(".example").forEach((button) => {
       button.addEventListener("click", () => {
@@ -83,14 +84,12 @@ const question = document.querySelector("#question");
         status.textContent = "GitHub \uC5F0\uACB0 \uD544\uC694";
         answer.innerHTML = "<span class='error'>GitHub \uC5F0\uACB0 \uD6C4 \uC800\uC7A5\uC18C\uB97C \uC120\uD0DD\uD574\uC57C \uBD84\uC11D\uC744 \uC2DC\uC791\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.</span>";
       }
-      connectGithub.textContent = selectedRepoLabel || (githubConnected ? `@${config.github_user}` : "GitHub \uC5F0\uACB0");
       connectedGoogleUser = config.google_user || "";
-      connectGoogle.textContent = connectedGoogleUser ? `Calendar: ${connectedGoogleUser}` : "Google Calendar \uC5F0\uACB0";
-      installGithub.hidden = Boolean((config.repositories || []).length);
-      document.querySelector("#backend").textContent = config.backend;
-      document.querySelector("#model").textContent = config.model;
       notionEnabled = Boolean(config.notion_enabled);
       calendarEnabled = Boolean(config.calendar_enabled);
+      setServiceCard(connectGithub, selectedRepoLabel || "GitHub 연결", Boolean(selectedRepoLabel || githubConnected));
+      setServiceCard(connectNotion, "Notion 연결", notionEnabled);
+      setServiceCard(connectGoogle, connectedGoogleUser ? `Calendar: ${connectedGoogleUser}` : "Google Calendar 연결", calendarEnabled);
       const devBypassConnections = new URLSearchParams(window.location.search).get("dev") === "1";
       const readyForDashboard = devBypassConnections || (Boolean(selectedRepoLabel) && notionEnabled && calendarEnabled);
       if (!readyForDashboard) {
@@ -98,8 +97,6 @@ const question = document.querySelector("#question");
         return;
       }
       appShell.classList.remove("is-hidden");
-      document.querySelector("#notion").textContent = notionEnabled ? "notion on" : "notion off";
-      document.querySelector("#calendar").textContent = calendarEnabled ? "calendar on" : "calendar off";
       renderNotionDatabases(config.notion_databases || [], config.notion_database_id || "", Boolean(config.notion_workspace));
       renderNotionPages(config.notion_pages || [], config.notion_page_id || "", Boolean(config.notion_workspace));
       googleCalendarLink.href = calendarEnabled ? googleCalendarUrl(connectedGoogleUser) : "/auth/google";
@@ -643,6 +640,15 @@ const question = document.querySelector("#question");
       }
     }
 
+    function setServiceCard(card, label, connected) {
+      if (!card) return;
+      const labelEl = card.querySelector(".service-label");
+      const statusEl = card.querySelector(".service-status");
+      if (labelEl) labelEl.textContent = label;
+      if (statusEl) statusEl.textContent = connected ? "연결됨" : "연결 필요";
+      card.classList.toggle("is-connected", connected);
+    }
+
     function scrollChatToBottom() {
       if (!chatThread) return;
       chatThread.scrollTop = chatThread.scrollHeight;
@@ -673,7 +679,7 @@ const question = document.querySelector("#question");
       message.innerHTML = `
         <div class="chat-avatar">AI</div>
         <div class="chat-bubble">
-          <div class="chat-name">GitHub AI Agent</div>
+          <div class="chat-name">DEVFLOW AI Agent</div>
           <div class="answer"></div>
         </div>
       `;
@@ -687,7 +693,8 @@ const question = document.querySelector("#question");
 
     function refreshApproveButtons() {
       const hasTasks = proposedTasks.length > 0;
-      approveNotion.disabled = !notionEnabled || !hasTasks;
+      updateNotionSaveModeFromText(lastUserQuestion || question.value || answer.textContent);
+      approveNotion.disabled = !canApproveNotion();
       approveCalendar.disabled = !calendarEnabled || !hasTasks;
       saveReviewNotion.disabled = !notionEnabled || !lastReviewResult;
     }
@@ -757,6 +764,41 @@ const question = document.querySelector("#question");
       });
     }
 
+    function inferNotionSaveMode(text) {
+      const normalized = (text || "").toLowerCase();
+      if (/(체크리스트|체크\s*리스트|checklist|check list|체크박스|todo\s*list)/i.test(normalized)) {
+        return "checklist";
+      }
+      if (/(데이터베이스|database|\bdb\b|표|테이블|행으로|팀원별|담당자별|할\s*일|작업\s*분배|업무\s*분배)/i.test(normalized)) {
+        return "database";
+      }
+      if (/(페이지|문서|기록|정리|분석\s*내용|코드\s*리뷰|리뷰\s*내용|본문|노트)/i.test(normalized)) {
+        return "page";
+      }
+      return proposedTasks.length ? "database" : "page";
+    }
+
+    function notionSaveModeLabel(mode) {
+      if (mode === "checklist") return "체크리스트";
+      if (mode === "page") return "페이지 기록";
+      return "DB 작업 등록";
+    }
+
+    function updateNotionSaveModeFromText(text) {
+      currentNotionSaveMode = inferNotionSaveMode(text);
+      if (notionSaveMode) {
+        notionSaveMode.value = currentNotionSaveMode;
+      }
+      approveNotion.textContent = `Notion ${notionSaveModeLabel(currentNotionSaveMode)} 승인`;
+      return currentNotionSaveMode;
+    }
+
+    function canApproveNotion() {
+      const hasTasks = proposedTasks.length > 0;
+      const hasAnswer = Boolean(answer && answer.textContent && answer.textContent.trim());
+      return notionEnabled && (hasTasks || (hasAnswer && ["page", "checklist"].includes(currentNotionSaveMode)));
+    }
+
     async function analyzeGithub() {
       const text = question.value.trim();
       if (!selectedRepository.owner || !selectedRepository.repo) {
@@ -770,6 +812,8 @@ const question = document.querySelector("#question");
         question.focus();
         return;
       }
+      lastUserQuestion = text;
+      const requestedNotionMode = updateNotionSaveModeFromText(text);
       appendUserChatMessage(text);
       const currentAnswer = appendAssistantChatMessage("GitHub MCP/API 기록에서 팀원, 작업 성향, 마감일 후보를 분석하는 중입니다.");
       analyze.disabled = true;
@@ -794,7 +838,8 @@ const question = document.querySelector("#question");
         if (!response.ok) {
           throw new Error(payload.error || "Request failed");
         }
-        currentAnswer.textContent = payload.answer;
+        const notionHint = `\n\nNotion 저장 방식 판단\n1. 채팅 내용을 기준으로 '${notionSaveModeLabel(requestedNotionMode)}' 방식으로 해석했습니다.\n2. 저장하려면 아래의 'Notion ${notionSaveModeLabel(requestedNotionMode)} 승인' 버튼을 눌러주세요.`;
+        currentAnswer.textContent = `${payload.answer}${notionHint}`;
         answer = currentAnswer;
         scrollChatToBottom();
         renderTools(payload.selected_tools || []);
@@ -815,7 +860,9 @@ const question = document.querySelector("#question");
 
     async function postSelectedTasks(url, savingText, successText) {
       const items = selectedTasks();
-      if (!items.length) {
+      const isNotionRequest = url.includes("approve-tasks");
+      const saveMode = updateNotionSaveModeFromText(lastUserQuestion || question.value || answer.textContent);
+      if (!items.length && (!isNotionRequest || !["page", "checklist"].includes(saveMode))) {
         status.textContent = "No selected tasks";
         return;
       }
@@ -829,7 +876,7 @@ const question = document.querySelector("#question");
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             tasks: items,
-            save_mode: notionSaveMode.value,
+            save_mode: saveMode,
             page_id: notionPageSelect.value,
             answer: answer.textContent,
           }),
@@ -843,7 +890,7 @@ const question = document.querySelector("#question");
           .filter((item) => item.url)
           .map((item, index) => `<a href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">Notion에서 열기 ${index + 1}</a>`)
           .join("<br>");
-        answer.innerHTML += `<br><br>${escapeHtml(successText)}: ${count}?${links ? "<br>" + links : ""}`;
+        answer.innerHTML += `<br><br>${escapeHtml(successText)} (${escapeHtml(notionSaveModeLabel(saveMode))}): ${count}개${links ? "<br>" + links : ""}`;
         renderTools(payload.selected_tools || []);
         status.textContent = "Saved";
       } catch (error) {
@@ -867,7 +914,7 @@ const question = document.querySelector("#question");
         body: JSON.stringify({ database_id: databaseId }),
       });
       notionEnabled = true;
-      document.querySelector("#notion").textContent = "notion on";
+      setServiceCard(connectNotion, "Notion 연결", notionEnabled);
       refreshApproveButtons();
     });
     createNotionDatabase.addEventListener("click", async () => {
@@ -883,7 +930,7 @@ const question = document.querySelector("#question");
         if (!response.ok) throw new Error(payload.error || "Failed to create Notion database");
         renderNotionDatabases(payload.databases || [], payload.database_id || "", true);
         notionEnabled = true;
-        document.querySelector("#notion").textContent = "notion on";
+        setServiceCard(connectNotion, "Notion 연결", notionEnabled);
         status.textContent = "Notion database ready";
         refreshApproveButtons();
       } catch (error) {

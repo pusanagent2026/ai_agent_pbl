@@ -221,8 +221,12 @@ class AppHandler(BaseHTTPRequestHandler):
             save_mode = str(payload.get("save_mode") or "database").strip()
             page_id = str(payload.get("page_id") or "").strip()
             answer_text = str(payload.get("answer") or "").strip()
-            if not isinstance(tasks, list) or not tasks:
-                self._send_json({"error": "tasks are required"}, HTTPStatus.BAD_REQUEST)
+            if not isinstance(tasks, list):
+                tasks = []
+            if save_mode not in {"database", "page", "checklist"}:
+                save_mode = "database"
+            if save_mode == "database" and not tasks:
+                self._send_json({"error": "tasks are required for database save"}, HTTPStatus.BAD_REQUEST)
                 return
             session = self._session()
             notion_token = str(session.get("notion_access_token") or "")
@@ -252,6 +256,7 @@ class AppHandler(BaseHTTPRequestHandler):
                         notion_page_id=page_id,
                     )
                 )
+                result["save_mode"] = save_mode
                 self._send_json(result)
                 return
             if notion_token and not notion_database_id:
@@ -269,6 +274,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     notion_database_id = created_database["id"]
                     session["notion_database_id"] = notion_database_id
             result = asyncio.run(create_notion_tasks(tasks, notion_token=notion_token, notion_database_id=notion_database_id))
+            result["save_mode"] = save_mode
             self._send_json(result)
         except Exception as error:
             self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
