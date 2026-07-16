@@ -9,6 +9,8 @@ const question = document.querySelector("#question");
     const status = document.querySelector("#status");
     const repoSelect = document.querySelector("#repoSelect");
     const connectGithub = document.querySelector("#connectGithub");
+    const refreshGithubSync = document.querySelector("#refreshGithubSync");
+    const githubSyncTime = document.querySelector("#githubSyncTime");
     const connectNotion = document.querySelector("#connectNotion");
     const notionDatabaseField = document.querySelector("#notionDatabaseField");
     const notionDatabaseSelect = document.querySelector("#notionDatabaseSelect");
@@ -51,6 +53,7 @@ const question = document.querySelector("#question");
     let calendarEnabled = false;
     let connectedGoogleUser = "";
     let selectedRepository = { owner: "", repo: "", installation_id: "" };
+    let lastGithubSyncAt = null;
     let branchesLoaded = false;
     let currentBranch = "";
     let allFiles = [];
@@ -64,7 +67,9 @@ const question = document.querySelector("#question");
     let calendarView = "list";
     let loadedCalendarEvents = [];
     let lastUserQuestion = "";
+    let lastAnalysisAnswerText = "";
     let currentNotionSaveMode = "database";
+    let shouldCreateNotionDatabaseBeforeSave = false;
 
     document.querySelectorAll(".example").forEach((button) => {
       button.addEventListener("click", () => {
@@ -72,6 +77,22 @@ const question = document.querySelector("#question");
         question.focus();
       });
     });
+
+    function formatRelativeSyncTime(date) {
+      if (!date) return "마지막 동기화: 확인 중";
+      const diffSeconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+      if (diffSeconds < 10) return "마지막 동기화: 방금 전";
+      if (diffSeconds < 60) return `마지막 동기화: ${diffSeconds}초 전`;
+      const diffMinutes = Math.floor(diffSeconds / 60);
+      if (diffMinutes < 60) return `마지막 동기화: ${diffMinutes}분 전`;
+      const diffHours = Math.floor(diffMinutes / 60);
+      return `마지막 동기화: ${diffHours}시간 전`;
+    }
+
+    function updateGithubSyncTime() {
+      if (!githubSyncTime) return;
+      githubSyncTime.textContent = formatRelativeSyncTime(lastGithubSyncAt);
+    }
 
     async function loadConfig() {
       const response = await fetch("/api/config");
@@ -91,14 +112,14 @@ const question = document.querySelector("#question");
       setServiceCard(connectNotion, "Notion 연결", notionEnabled);
       setServiceCard(connectGoogle, connectedGoogleUser ? `Calendar: ${connectedGoogleUser}` : "Google Calendar 연결", calendarEnabled);
       const devBypassConnections = new URLSearchParams(window.location.search).get("dev") === "1";
-      const readyForDashboard = devBypassConnections || (Boolean(selectedRepoLabel) && notionEnabled && calendarEnabled);
+      const readyForDashboard = devBypassConnections || Boolean(selectedRepoLabel);
       if (!readyForDashboard) {
         window.location.replace("/");
         return;
       }
       appShell.classList.remove("is-hidden");
-      renderNotionDatabases(config.notion_databases || [], config.notion_database_id || "", Boolean(config.notion_workspace));
-      renderNotionPages(config.notion_pages || [], config.notion_page_id || "", Boolean(config.notion_workspace));
+      renderNotionDatabases(config.notion_databases || [], config.notion_database_id || "", notionEnabled);
+      renderNotionPages(config.notion_pages || [], config.notion_page_id || "", notionEnabled);
       googleCalendarLink.href = calendarEnabled ? googleCalendarUrl(connectedGoogleUser) : "/auth/google";
       await loadCalendarEvents();
       renderMembers(config.members || [], config.member_warnings || []);
@@ -109,6 +130,8 @@ const question = document.querySelector("#question");
       if (selectedRepository.owner && selectedRepository.repo) {
         startPushPolling();
       }
+      lastGithubSyncAt = new Date();
+      updateGithubSyncTime();
     }
 
     async function loadCalendarEvents() {
@@ -133,9 +156,14 @@ const question = document.querySelector("#question");
     function renderNotionDatabases(databases, selectedDatabaseId, notionConnected) {
       notionDatabaseSelect.innerHTML = "";
       if (!databases.length) {
-        notionDatabaseField.hidden = true;
-        createNotionDatabase.hidden = !notionConnected;
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = notionConnected ? "Notion 연결됨 - 선택 가능한 DB 없음" : "Notion 연결 필요";
+        notionDatabaseSelect.appendChild(option);
+        notionDatabaseSelect.disabled = true;
+        notionDatabaseField.hidden = !notionConnected;
       } else {
+        notionDatabaseSelect.disabled = false;
         databases.forEach((database) => {
           const option = document.createElement("option");
           option.value = database.id;
@@ -144,17 +172,27 @@ const question = document.querySelector("#question");
           notionDatabaseSelect.appendChild(option);
         });
         notionDatabaseField.hidden = false;
+      }
+      if (createNotionDatabase) {
         createNotionDatabase.hidden = !notionConnected;
       }
-      notionSaveModeField.hidden = !notionConnected;
+      if (notionSaveModeField) {
+        notionSaveModeField.hidden = true;
+      }
     }
 
     function renderNotionPages(pages, selectedPageId, notionConnected) {
       notionPageSelect.innerHTML = "";
       if (!pages.length) {
-        notionPageField.hidden = true;
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = notionConnected ? "Notion 연결됨 - 선택 가능한 페이지 없음" : "Notion 연결 필요";
+        notionPageSelect.appendChild(option);
+        notionPageSelect.disabled = true;
+        notionPageField.hidden = !notionConnected;
         return;
       }
+      notionPageSelect.disabled = false;
       pages.forEach((page) => {
         const option = document.createElement("option");
         option.value = page.id;
@@ -313,20 +351,45 @@ const question = document.querySelector("#question");
     }
 
     function readSavedRepository(config) {
+      const repositories = config.repositories || [];
       const saved = localStorage.getItem("selectedRepository");
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          if (parsed.owner && parsed.repo) {
+          const stillAvailable = repositories.some((repository) => (
+            repository.owner === parsed.owner && repository.repo === parsed.repo
+          ));
+          if (parsed.owner && parsed.repo && (!repositories.length || stillAvailable)) {
             return parsed;
           }
         } catch (_) {}
+      }
+      if (config.owner && config.repo) {
+        const matched = repositories.find((repository) => repository.owner === config.owner && repository.repo === config.repo);
+        const fallback = {
+          owner: config.owner,
+          repo: config.repo,
+          installation_id: matched ? matched.installation_id || "" : config.installation_id || "",
+        };
+        localStorage.setItem("selectedRepository", JSON.stringify(fallback));
+        return fallback;
+      }
+      if (repositories.length) {
+        const first = repositories[0];
+        const fallback = {
+          owner: first.owner,
+          repo: first.repo,
+          installation_id: first.installation_id || "",
+        };
+        localStorage.setItem("selectedRepository", JSON.stringify(fallback));
+        return fallback;
       }
       return { owner: "", repo: "", installation_id: "" };
     }
 
     function renderRepositorySelect(repositories) {
-      document.querySelector("#repo").textContent = `${selectedRepository.owner}/${selectedRepository.repo}`;
+      const selectedRepoLabel = selectedRepository.owner && selectedRepository.repo ? `${selectedRepository.owner}/${selectedRepository.repo}` : "저장소를 선택해주세요";
+      document.querySelector("#repo").textContent = selectedRepoLabel;
       repoSelect.innerHTML = "";
       if (!repositories.length) {
         repoSelect.hidden = true;
@@ -363,6 +426,26 @@ const question = document.querySelector("#question");
       }
       startPushPolling();
     });
+
+    if (refreshGithubSync) {
+      refreshGithubSync.addEventListener("click", async () => {
+        refreshGithubSync.disabled = true;
+        refreshGithubSync.classList.add("is-syncing");
+        status.textContent = "GitHub 동기화 중...";
+        try {
+          await loadConfig();
+          status.textContent = "GitHub 동기화 완료";
+        } catch (error) {
+          status.textContent = "동기화 실패";
+          if (answer) {
+            answer.innerHTML += `<br><span class="error">${escapeHtml(error.message)}</span>`;
+          }
+        } finally {
+          refreshGithubSync.disabled = false;
+          refreshGithubSync.classList.remove("is-syncing");
+        }
+      });
+    }
 
     async function switchTab(target) {
       taskPlannerView.hidden = target !== "taskPlanner";
@@ -654,6 +737,10 @@ const question = document.querySelector("#question");
       chatThread.scrollTop = chatThread.scrollHeight;
     }
 
+    function wait(ms) {
+      return new Promise((resolve) => window.setTimeout(resolve, ms));
+    }
+
     function appendUserChatMessage(text) {
       if (!chatThread) return;
       const message = document.createElement("div");
@@ -726,10 +813,19 @@ const question = document.querySelector("#question");
       return;
     }
 
+    function renderTaskEmptyState(message, icon = "☑") {
+      tasks.innerHTML = `
+        <div class="task-empty-state">
+          <span class="empty-illustration">${escapeHtml(icon)}</span>
+          <span>${escapeHtml(message)}</span>
+        </div>
+      `;
+    }
+
     function renderTasks(items) {
       proposedTasks = items || [];
       if (!proposedTasks.length) {
-        tasks.innerHTML = "<span class='muted'>제안된 할 일이 없습니다.</span>";
+        renderTaskEmptyState("제안된 할 일이 없습니다.");
         refreshApproveButtons();
         return;
       }
@@ -769,7 +865,7 @@ const question = document.querySelector("#question");
       if (/(체크리스트|체크\s*리스트|checklist|check list|체크박스|todo\s*list)/i.test(normalized)) {
         return "checklist";
       }
-      if (/(데이터베이스|database|\bdb\b|표|테이블|행으로|팀원별|담당자별|할\s*일|작업\s*분배|업무\s*분배)/i.test(normalized)) {
+      if (/(데이터베이스|database|\bdb\b|표|테이블|행으로|팀원별|담당자별|할\s*일|작업\s*분배|업무\s*분배|db\s*생성|db\s*만들|데이터베이스\s*생성|데이터베이스\s*만들)/i.test(normalized)) {
         return "database";
       }
       if (/(페이지|문서|기록|정리|분석\s*내용|코드\s*리뷰|리뷰\s*내용|본문|노트)/i.test(normalized)) {
@@ -786,10 +882,13 @@ const question = document.querySelector("#question");
 
     function updateNotionSaveModeFromText(text) {
       currentNotionSaveMode = inferNotionSaveMode(text);
+      shouldCreateNotionDatabaseBeforeSave = /(db|데이터베이스).{0,12}(생성|만들|새로|자동)|(?:생성|만들|새로|자동).{0,12}(db|데이터베이스)/i.test(text || "");
       if (notionSaveMode) {
         notionSaveMode.value = currentNotionSaveMode;
       }
-      approveNotion.textContent = `Notion ${notionSaveModeLabel(currentNotionSaveMode)} 승인`;
+      approveNotion.textContent = shouldCreateNotionDatabaseBeforeSave && currentNotionSaveMode === "database"
+        ? "Notion DB 생성 후 저장 승인"
+        : `Notion ${notionSaveModeLabel(currentNotionSaveMode)} 승인`;
       return currentNotionSaveMode;
     }
 
@@ -799,28 +898,55 @@ const question = document.querySelector("#question");
       return notionEnabled && (hasTasks || (hasAnswer && ["page", "checklist"].includes(currentNotionSaveMode)));
     }
 
+    function isFollowUpNotionSaveRequest(text) {
+      const normalized = (text || "").toLowerCase();
+      const mentionsNotion = /(notion|노션)/i.test(normalized);
+      const asksToSave = /(저장|기록|등록|남겨|올려|업로드|추가)/i.test(normalized);
+      const refersPrevious = /(방금|위\s*내용|이\s*내용|이전|아까|분석\s*내용|답변|결과)/i.test(normalized);
+      return mentionsNotion && asksToSave && refersPrevious && Boolean(lastAnalysisAnswerText || answer.textContent.trim());
+    }
+
+    async function savePreviousAnswerToNotion(text) {
+      lastUserQuestion = text;
+      const saveMode = updateNotionSaveModeFromText(text);
+      appendUserChatMessage(text);
+      question.value = "";
+      await wait(520);
+      const currentAnswer = appendAssistantChatMessage(`방금 분석 내용을 '${notionSaveModeLabel(saveMode)}' 방식으로 Notion에 저장하는 중입니다.`);
+      answer = currentAnswer;
+      await postSelectedTasks("/api/approve-tasks", "Saving to Notion...", "Notion 등록 완료");
+      scrollChatToBottom();
+    }
+
     async function analyzeGithub() {
       const text = question.value.trim();
+      if (!text) {
+        question.focus();
+        return;
+      }
+      if (isFollowUpNotionSaveRequest(text)) {
+        await savePreviousAnswerToNotion(text);
+        question.value = "";
+        return;
+      }
       if (!selectedRepository.owner || !selectedRepository.repo) {
         status.textContent = "GitHub 연결 필요";
         answer.innerHTML = "<span class='error'>먼저 GitHub에 연결하고 분석할 저장소를 선택해주세요.</span>";
-        tasks.innerHTML = "<span class='muted'>저장소가 선택되면 GitHub 기록을 분석할 수 있습니다.</span>";
+        renderTaskEmptyState("저장소가 선택되면 GitHub 기록을 분석할 수 있습니다.", "GH");
         connectGithub.focus();
-        return;
-      }
-      if (!text) {
-        question.focus();
         return;
       }
       lastUserQuestion = text;
       const requestedNotionMode = updateNotionSaveModeFromText(text);
       appendUserChatMessage(text);
+      question.value = "";
+      await wait(520);
       const currentAnswer = appendAssistantChatMessage("GitHub MCP/API 기록에서 팀원, 작업 성향, 마감일 후보를 분석하는 중입니다.");
       analyze.disabled = true;
       approveNotion.disabled = true;
       approveCalendar.disabled = true;
       status.textContent = "Analyzing GitHub...";
-      tasks.innerHTML = "<span class='muted'>할 일 후보 생성 중...</span>";
+      renderTaskEmptyState("GitHub 기록을 바탕으로 할 일 후보를 생성하는 중입니다.", "…");
 
       try {
         const response = await fetch("/api/analyze-tasks", {
@@ -838,6 +964,7 @@ const question = document.querySelector("#question");
         if (!response.ok) {
           throw new Error(payload.error || "Request failed");
         }
+        lastAnalysisAnswerText = payload.answer || "";
         const notionHint = `\n\nNotion 저장 방식 판단\n1. 채팅 내용을 기준으로 '${notionSaveModeLabel(requestedNotionMode)}' 방식으로 해석했습니다.\n2. 저장하려면 아래의 'Notion ${notionSaveModeLabel(requestedNotionMode)} 승인' 버튼을 눌러주세요.`;
         currentAnswer.textContent = `${payload.answer}${notionHint}`;
         answer = currentAnswer;
@@ -850,7 +977,7 @@ const question = document.querySelector("#question");
         currentAnswer.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
         answer = currentAnswer;
         scrollChatToBottom();
-        tasks.innerHTML = "<span class='muted'>할 일 후보를 만들지 못했습니다.</span>";
+        renderTaskEmptyState("할 일 후보를 만들지 못했습니다.", "!");
         status.textContent = "Error";
       } finally {
         analyze.disabled = false;
@@ -871,6 +998,11 @@ const question = document.querySelector("#question");
       analyze.disabled = true;
       status.textContent = savingText;
       try {
+        if (isNotionRequest && saveMode === "database" && shouldCreateNotionDatabaseBeforeSave) {
+          status.textContent = "Creating Notion database...";
+          await createDefaultNotionDatabase("AI Agent Tasks");
+          status.textContent = savingText;
+        }
         const response = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -878,7 +1010,7 @@ const question = document.querySelector("#question");
             tasks: items,
             save_mode: saveMode,
             page_id: notionPageSelect.value,
-            answer: answer.textContent,
+            answer: lastAnalysisAnswerText || answer.textContent,
           }),
         });
         const payload = await response.json();
@@ -902,6 +1034,22 @@ const question = document.querySelector("#question");
       }
     }
 
+    async function createDefaultNotionDatabase(title = "AI Agent Tasks") {
+      const response = await fetch("/api/create-notion-database", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to create Notion database");
+      }
+      renderNotionDatabases(payload.databases || [], payload.database_id || "", true);
+      notionEnabled = true;
+      setServiceCard(connectNotion, "Notion 연결", notionEnabled);
+      return payload;
+    }
+
     analyze.addEventListener("click", analyzeGithub);
     approveNotion.addEventListener("click", () => postSelectedTasks("/api/approve-tasks", "Saving to Notion...", "Notion 등록 완료"));
     approveCalendar.addEventListener("click", () => postSelectedTasks("/api/approve-calendar-events", "Saving to Calendar...", "Calendar 등록 완료"));
@@ -917,29 +1065,22 @@ const question = document.querySelector("#question");
       setServiceCard(connectNotion, "Notion 연결", notionEnabled);
       refreshApproveButtons();
     });
-    createNotionDatabase.addEventListener("click", async () => {
-      createNotionDatabase.disabled = true;
-      status.textContent = "Creating Notion database...";
-      try {
-        const response = await fetch("/api/create-notion-database", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: "AI Agent Tasks" }),
-        });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "Failed to create Notion database");
-        renderNotionDatabases(payload.databases || [], payload.database_id || "", true);
-        notionEnabled = true;
-        setServiceCard(connectNotion, "Notion 연결", notionEnabled);
-        status.textContent = "Notion database ready";
-        refreshApproveButtons();
-      } catch (error) {
-        status.textContent = "Error";
-        answer.innerHTML += `<br><span class="error">${escapeHtml(error.message)}</span>`;
-      } finally {
-        createNotionDatabase.disabled = false;
-      }
-    });
+    if (createNotionDatabase) {
+      createNotionDatabase.addEventListener("click", async () => {
+        createNotionDatabase.disabled = true;
+        status.textContent = "Creating Notion database...";
+        try {
+          await createDefaultNotionDatabase("AI Agent Tasks");
+          status.textContent = "Notion database ready";
+          refreshApproveButtons();
+        } catch (error) {
+          status.textContent = "Error";
+          answer.innerHTML += `<br><span class="error">${escapeHtml(error.message)}</span>`;
+        } finally {
+          createNotionDatabase.disabled = false;
+        }
+      });
+    }
 
     calendarListView.addEventListener("click", () => {
       calendarView = "list";
@@ -1203,3 +1344,4 @@ const question = document.querySelector("#question");
     loadConfig().catch(() => {
       document.querySelector("#repo").textContent = "config error";
     });
+    window.setInterval(updateGithubSyncTime, 30000);

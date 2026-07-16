@@ -920,11 +920,11 @@ answer 작성 규칙:
 
 
 def _base_url() -> str:
-    return os.environ.get("APP_BASE_URL", "http://127.0.0.1:8787").rstrip("/")
+    return os.environ.get("APP_BASE_URL", "http://localhost:8787").rstrip("/")
 
 
 def _notion_base_url() -> str:
-    return os.environ.get("NOTION_REDIRECT_BASE_URL", "http://localhost:8787").rstrip("/")
+    return os.environ.get("NOTION_REDIRECT_BASE_URL", _base_url()).rstrip("/")
 
 
 def _google_calendar_url(email: str = "") -> str:
