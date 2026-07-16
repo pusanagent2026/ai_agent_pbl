@@ -16,8 +16,8 @@ from github_ai_agent.github_api_client import (
     fetch_branches,
     fetch_file_content,
     fetch_repo_tree,
+    resolve_github_token,
 )
-from github_ai_agent.github_app_auth import GitHubAppTokenProvider
 
 MAX_FILE_CHARS = 20000
 
@@ -47,18 +47,6 @@ REVIEW_FILE_SYSTEM_PROMPT = """
 """.strip()
 
 
-def _resolve_github_token(installation_id: str, session_token: str) -> str:
-    provider = GitHubAppTokenProvider(installation_id or None)
-    if provider.enabled:
-        return provider.create_installation_token()
-    if session_token:
-        return session_token
-    env_token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if env_token:
-        return env_token
-    raise ValueError("GitHub 인증 정보가 없습니다. 저장소를 먼저 연결하세요.")
-
-
 async def list_branches(
     owner: str,
     repo: str,
@@ -68,7 +56,7 @@ async def list_branches(
 ) -> list[dict[str, Any]]:
     if not owner or not repo:
         return []
-    token = _resolve_github_token(installation_id, session_token)
+    token = resolve_github_token(installation_id, session_token)
     return fetch_branches(token, owner, repo)
 
 
@@ -82,7 +70,7 @@ async def list_repo_tree(
 ) -> dict[str, Any]:
     if not owner or not repo or not branch:
         return {"files": [], "truncated": False}
-    token = _resolve_github_token(installation_id, session_token)
+    token = resolve_github_token(installation_id, session_token)
     files, truncated = fetch_repo_tree(token, owner, repo, branch)
     return {"files": files, "truncated": truncated}
 
@@ -96,7 +84,7 @@ async def review_file(
     installation_id: str = "",
     session_token: str = "",
 ) -> dict[str, Any]:
-    token = _resolve_github_token(installation_id, session_token)
+    token = resolve_github_token(installation_id, session_token)
     file_info = fetch_file_content(token, owner, repo, path, branch)
 
     if file_info["too_large"]:

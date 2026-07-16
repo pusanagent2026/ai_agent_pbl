@@ -21,6 +21,7 @@ from github_ai_agent.github_app_auth import GitHubAppTokenProvider, resolve_defa
 from github_ai_agent.google_calendar_client import GoogleCalendarToolClient
 from github_ai_agent.mcp_client import GitHubMcpClient
 from github_ai_agent.notion_client import NotionToolClient
+from github_ai_agent import readme_review
 
 SESSIONS: dict[str, dict[str, Any]] = {}
 OAUTH_STATES: dict[str, str] = {}
@@ -149,6 +150,27 @@ HTML = r"""<!doctype html>
     .tool { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; background: #fbfcfe; }
     pre { margin: 8px 0 0; overflow: auto; border-radius: 8px; background: var(--code); padding: 10px; font-size: 12px; }
     .error { color: var(--warn); font-weight: 700; }
+    .diff-header-row { display: grid; grid-template-columns: 1fr 1fr; font-weight: 700; margin-top: 10px; }
+    .readme-diff-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      max-height: 400px;
+      overflow: auto;
+      margin-top: 8px;
+      border-radius: 8px;
+      background: var(--code);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+    }
+    .readme-diff-grid > div { padding: 1px 8px; overflow-wrap: anywhere; border-left: 1px solid var(--line); }
+    .readme-diff-grid > div:nth-child(odd) { border-left: none; }
+    .diff-add { background: #ecfdf5; color: #166534; }
+    .diff-remove { background: #fef2f2; color: #991b1b; }
+    .diff-empty { background: #eef1f5; }
+    .push-notifications { display: flex; flex-direction: column; gap: 6px; }
+    .push-notification { cursor: pointer; border: 1px solid var(--accent); border-radius: 8px; padding: 8px 12px; background: #ecfdf5; color: var(--accent-dark); font-weight: 700; }
+    .push-notification:hover { background: var(--accent); color: #fff; }
     .tabs { display: flex; gap: 8px; }
     .tab-button { padding: 8px 14px; font-weight: 700; }
     .tab-button.active { border-color: var(--accent); background: var(--accent); color: #fff; }
@@ -238,9 +260,11 @@ HTML = r"""<!doctype html>
     </aside>
 
     <main>
+      <div id="pushNotifications" class="push-notifications"></div>
       <div class="tabs">
         <button class="tab-button active" id="tabTaskPlanner" type="button">작업 분배</button>
         <button class="tab-button" id="tabCodeReview" type="button">코드 리뷰</button>
+        <button class="tab-button" id="tabReadmeUpdate" type="button">README 갱신</button>
       </div>
 
       <div id="taskPlannerView">
@@ -301,6 +325,36 @@ HTML = r"""<!doctype html>
           </section>
         </div>
       </div>
+
+      <div id="readmeUpdateView" hidden>
+        <div class="composer">
+          <div class="review-select-row">
+            <select id="readmeBranchSelect"><option value="">브랜치를 불러오는 중...</option></select>
+          </div>
+          <div class="actions">
+            <span class="muted" id="readmeStatus">Ready</span>
+            <div class="button-row">
+              <button class="primary" id="analyzeReadme">Analyze README</button>
+              <button class="approve" id="applyReadmeUpdate" disabled>PR 생성</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="results">
+          <section>
+            <h2>판단 결과</h2>
+            <div class="answer" id="readmeVerdict">아직 분석하지 않았습니다.</div>
+          </section>
+          <section>
+            <h2>변경 사항</h2>
+            <div class="diff-header-row">
+              <span>이전 README</span>
+              <span>바뀐 README</span>
+            </div>
+            <div id="readmeDiff" class="readme-diff-grid muted">-</div>
+          </section>
+        </div>
+      </div>
     </main>
   </div>
 
@@ -332,8 +386,10 @@ HTML = r"""<!doctype html>
 
     const tabTaskPlanner = document.querySelector("#tabTaskPlanner");
     const tabCodeReview = document.querySelector("#tabCodeReview");
+    const tabReadmeUpdate = document.querySelector("#tabReadmeUpdate");
     const taskPlannerView = document.querySelector("#taskPlannerView");
     const codeReviewView = document.querySelector("#codeReviewView");
+    const readmeUpdateView = document.querySelector("#readmeUpdateView");
     const branchSelect = document.querySelector("#branchSelect");
     const fileFilter = document.querySelector("#fileFilter");
     const fileListEl = document.querySelector("#fileList");
@@ -343,6 +399,12 @@ HTML = r"""<!doctype html>
     const reviewSummary = document.querySelector("#reviewSummary");
     const reviewErrors = document.querySelector("#reviewErrors");
     const reviewComments = document.querySelector("#reviewComments");
+    const readmeBranchSelect = document.querySelector("#readmeBranchSelect");
+    const analyzeReadmeButton = document.querySelector("#analyzeReadme");
+    const applyReadmeUpdateButton = document.querySelector("#applyReadmeUpdate");
+    const readmeStatus = document.querySelector("#readmeStatus");
+    const readmeVerdict = document.querySelector("#readmeVerdict");
+    const readmeDiff = document.querySelector("#readmeDiff");
 
     let proposedTasks = [];
     let notionEnabled = false;
@@ -352,7 +414,12 @@ HTML = r"""<!doctype html>
     let currentBranch = "";
     let allFiles = [];
     let selectedFilePath = "";
+    let readmeBranchesLoaded = false;
+    let readmeCurrentBranch = "";
+    let readmeProposal = null;
     let lastReviewResult = null;
+    let branchShaBaseline = {};
+    let pushPollTimer = null;
     let calendarView = "list";
     let loadedCalendarEvents = [];
 
@@ -390,6 +457,9 @@ HTML = r"""<!doctype html>
         await loadMembers(selectedRepository.owner, selectedRepository.repo);
       }
       refreshApproveButtons();
+      if (selectedRepository.owner && selectedRepository.repo) {
+        startPushPolling();
+      }
     }
 
     async function loadCalendarEvents() {
@@ -638,25 +708,35 @@ HTML = r"""<!doctype html>
       localStorage.setItem("selectedRepository", JSON.stringify(selectedRepository));
       document.querySelector("#repo").textContent = `${owner}/${repo}`;
       branchesLoaded = false;
+      readmeBranchesLoaded = false;
       await loadMembers(owner, repo);
       if (!codeReviewView.hidden) {
         await loadBranches();
       }
+      if (!readmeUpdateView.hidden) {
+        await loadReadmeBranches();
+      }
+      startPushPolling();
     });
 
     function switchTab(target) {
-      const showCodeReview = target === "codeReview";
-      taskPlannerView.hidden = showCodeReview;
-      codeReviewView.hidden = !showCodeReview;
-      tabTaskPlanner.classList.toggle("active", !showCodeReview);
-      tabCodeReview.classList.toggle("active", showCodeReview);
-      if (showCodeReview && !branchesLoaded) {
+      taskPlannerView.hidden = target !== "taskPlanner";
+      codeReviewView.hidden = target !== "codeReview";
+      readmeUpdateView.hidden = target !== "readmeUpdate";
+      tabTaskPlanner.classList.toggle("active", target === "taskPlanner");
+      tabCodeReview.classList.toggle("active", target === "codeReview");
+      tabReadmeUpdate.classList.toggle("active", target === "readmeUpdate");
+      if (target === "codeReview" && !branchesLoaded) {
         loadBranches();
+      }
+      if (target === "readmeUpdate" && !readmeBranchesLoaded) {
+        loadReadmeBranches();
       }
     }
 
     tabTaskPlanner.addEventListener("click", () => switchTab("taskPlanner"));
     tabCodeReview.addEventListener("click", () => switchTab("codeReview"));
+    tabReadmeUpdate.addEventListener("click", () => switchTab("readmeUpdate"));
 
     async function loadBranches() {
       if (!selectedRepository.owner || !selectedRepository.repo) {
@@ -1113,6 +1193,238 @@ HTML = r"""<!doctype html>
         analyzeGithub();
       }
     });
+    async function loadReadmeBranches() {
+      if (!selectedRepository.owner || !selectedRepository.repo) {
+        readmeBranchSelect.innerHTML = "<option value=''>먼저 저장소를 연결하세요</option>";
+        return;
+      }
+      readmeBranchSelect.innerHTML = "<option value=''>브랜치를 불러오는 중...</option>";
+      try {
+        const params = new URLSearchParams({
+          owner: selectedRepository.owner,
+          repo: selectedRepository.repo,
+          installation_id: selectedRepository.installation_id || "",
+        });
+        const response = await fetch(`/api/branches?${params.toString()}`);
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Request failed");
+        }
+        const branches = payload.branches || [];
+        readmeBranchesLoaded = true;
+        if (!branches.length) {
+          readmeBranchSelect.innerHTML = "<option value=''>브랜치가 없습니다</option>";
+          return;
+        }
+        readmeBranchSelect.innerHTML = "";
+        branches.forEach((branch) => {
+          const option = document.createElement("option");
+          option.value = branch.name;
+          option.textContent = branch.name;
+          readmeBranchSelect.appendChild(option);
+        });
+        readmeCurrentBranch = branches[0].name;
+      } catch (error) {
+        readmeBranchSelect.innerHTML = "<option value=''>브랜치를 불러오지 못했습니다</option>";
+        readmeStatus.textContent = error.message;
+      }
+    }
+
+    readmeBranchSelect.addEventListener("change", () => {
+      readmeCurrentBranch = readmeBranchSelect.value;
+      readmeProposal = null;
+      applyReadmeUpdateButton.disabled = true;
+    });
+
+    function renderReadmeDiff(diff, fallbackText) {
+      const rows = diff && diff.length
+        ? diff
+        : (fallbackText || "").split("\n").map((line) => (
+            { left: line, left_type: "equal", right: line, right_type: "equal" }
+          ));
+      if (!rows.length) {
+        readmeDiff.textContent = "-";
+        return;
+      }
+      readmeDiff.innerHTML = rows.map((row) => {
+        const leftCls = row.left_type === "remove" ? "diff-remove" : row.left_type === "empty" ? "diff-empty" : "";
+        const rightCls = row.right_type === "add" ? "diff-add" : row.right_type === "empty" ? "diff-empty" : "";
+        return `<div class="${leftCls}">${escapeHtml(row.left)}</div><div class="${rightCls}">${escapeHtml(row.right)}</div>`;
+      }).join("");
+    }
+
+    function applyReadmeAnalysisResult(branch, payload) {
+      readmeCurrentBranch = branch;
+      renderReadmeDiff(payload.diff, payload.current_readme);
+      if (!payload.relevant) {
+        readmeVerdict.textContent = `이번 최신 커밋(${payload.commit_message || ""})은 README 갱신이 필요하지 않다고 판단했습니다.`;
+        readmeProposal = null;
+        applyReadmeUpdateButton.disabled = true;
+      } else if (!payload.changed) {
+        readmeVerdict.textContent = "관련 변경이지만 재작성 결과가 기존 README와 동일합니다.";
+        readmeProposal = null;
+        applyReadmeUpdateButton.disabled = true;
+      } else {
+        readmeVerdict.textContent = payload.summary || "README 갱신이 필요합니다.";
+        readmeProposal = payload;
+        applyReadmeUpdateButton.disabled = false;
+      }
+    }
+
+    function baselineStorageKey() {
+      return `readmePushBaseline:${selectedRepository.owner}/${selectedRepository.repo}`;
+    }
+
+    function loadBranchShaBaseline() {
+      try {
+        branchShaBaseline = JSON.parse(localStorage.getItem(baselineStorageKey()) || "{}");
+      } catch (_) {
+        branchShaBaseline = {};
+      }
+    }
+
+    function saveBranchShaBaseline() {
+      localStorage.setItem(baselineStorageKey(), JSON.stringify(branchShaBaseline));
+    }
+
+    function addPushNotification(branch, payload) {
+      const el = document.createElement("div");
+      el.className = "push-notification";
+      el.textContent = `push하여 '${branch}'에서 README를 갱신했습니다`;
+      el.addEventListener("click", () => {
+        switchTab("readmeUpdate");
+        readmeBranchSelect.value = branch;
+        applyReadmeAnalysisResult(branch, payload);
+        el.remove();
+      });
+      document.querySelector("#pushNotifications").prepend(el);
+    }
+
+    async function pollBranchPushes() {
+      if (!selectedRepository.owner || !selectedRepository.repo) return;
+      const params = new URLSearchParams({
+        owner: selectedRepository.owner,
+        repo: selectedRepository.repo,
+        installation_id: selectedRepository.installation_id || "",
+      });
+      let branches;
+      try {
+        const response = await fetch(`/api/branches?${params.toString()}`);
+        branches = (await response.json()).branches || [];
+      } catch (_) {
+        return;
+      }
+
+      const isFirstPoll = Object.keys(branchShaBaseline).length === 0;
+      for (const b of branches) {
+        const prevSha = branchShaBaseline[b.name];
+        branchShaBaseline[b.name] = b.sha;
+        if (isFirstPoll || prevSha === b.sha) continue;
+
+        let payload;
+        try {
+          const res = await fetch("/api/analyze-readme", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              owner: selectedRepository.owner,
+              repo: selectedRepository.repo,
+              installation_id: selectedRepository.installation_id || "",
+              branch: b.name,
+            }),
+          });
+          payload = await res.json();
+        } catch (_) {
+          continue;
+        }
+        if (payload && payload.changed) {
+          addPushNotification(b.name, payload);
+        }
+      }
+      saveBranchShaBaseline();
+    }
+
+    function startPushPolling() {
+      if (pushPollTimer) {
+        clearInterval(pushPollTimer);
+      }
+      loadBranchShaBaseline();
+      pollBranchPushes();
+      pushPollTimer = setInterval(pollBranchPushes, 30000);
+    }
+
+    async function analyzeReadme() {
+      if (!readmeCurrentBranch) {
+        readmeStatus.textContent = "브랜치를 먼저 선택하세요";
+        return;
+      }
+      analyzeReadmeButton.disabled = true;
+      applyReadmeUpdateButton.disabled = true;
+      readmeProposal = null;
+      readmeStatus.textContent = "Analyzing...";
+      readmeVerdict.textContent = "분석 중입니다...";
+      readmeDiff.textContent = "-";
+      try {
+        const response = await fetch("/api/analyze-readme", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            owner: selectedRepository.owner,
+            repo: selectedRepository.repo,
+            installation_id: selectedRepository.installation_id || "",
+            branch: readmeCurrentBranch,
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Request failed");
+        }
+        applyReadmeAnalysisResult(readmeCurrentBranch, payload);
+        readmeStatus.textContent = "Done";
+      } catch (error) {
+        readmeVerdict.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+        readmeStatus.textContent = "Error";
+      } finally {
+        analyzeReadmeButton.disabled = false;
+      }
+    }
+
+    async function applyReadmeUpdate() {
+      if (!readmeProposal) {
+        return;
+      }
+      applyReadmeUpdateButton.disabled = true;
+      readmeStatus.textContent = "Creating PR...";
+      try {
+        const response = await fetch("/api/apply-readme-update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            owner: selectedRepository.owner,
+            repo: selectedRepository.repo,
+            installation_id: selectedRepository.installation_id || "",
+            base_branch: readmeCurrentBranch,
+            readme_content: readmeProposal.proposed_readme,
+            summary: readmeProposal.summary,
+          }),
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.error || "Request failed");
+        }
+        readmeVerdict.innerHTML = `PR이 생성되었습니다: <a href="${escapeHtml(payload.pr_url)}" target="_blank" rel="noopener">${escapeHtml(payload.pr_url)}</a>`;
+        readmeStatus.textContent = "PR created";
+        readmeProposal = null;
+      } catch (error) {
+        readmeVerdict.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+        readmeStatus.textContent = "Error";
+        applyReadmeUpdateButton.disabled = false;
+      }
+    }
+
+    analyzeReadmeButton.addEventListener("click", analyzeReadme);
+    applyReadmeUpdateButton.addEventListener("click", applyReadmeUpdate);
+
     loadConfig().catch(() => {
       document.querySelector("#repo").textContent = "config error";
     });
@@ -1234,6 +1546,12 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/review-file":
             self._handle_review_file()
+            return
+        if self.path == "/api/analyze-readme":
+            self._handle_analyze_readme()
+            return
+        if self.path == "/api/apply-readme-update":
+            self._handle_apply_readme_update()
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -1471,6 +1789,63 @@ class AppHandler(BaseHTTPRequestHandler):
                     repo,
                     branch,
                     path,
+                    installation_id=installation_id,
+                    session_token=session_token,
+                )
+            )
+            self._send_json(result)
+        except Exception as error:
+            self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_analyze_readme(self) -> None:
+        try:
+            payload = self._read_json()
+            owner = str(payload.get("owner", "")).strip()
+            repo = str(payload.get("repo", "")).strip()
+            installation_id = str(payload.get("installation_id", "")).strip()
+            branch = str(payload.get("branch", "")).strip()
+            if not owner or not repo or not branch:
+                self._send_json(
+                    {"error": "owner, repo, branch are required"}, HTTPStatus.BAD_REQUEST
+                )
+                return
+            session_token = str(self._session().get("github_access_token") or "")
+            result = asyncio.run(
+                readme_review.analyze_readme_update(
+                    owner,
+                    repo,
+                    branch,
+                    installation_id=installation_id,
+                    session_token=session_token,
+                )
+            )
+            self._send_json(result)
+        except Exception as error:
+            self._send_json({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_apply_readme_update(self) -> None:
+        try:
+            payload = self._read_json()
+            owner = str(payload.get("owner", "")).strip()
+            repo = str(payload.get("repo", "")).strip()
+            installation_id = str(payload.get("installation_id", "")).strip()
+            base_branch = str(payload.get("base_branch", "")).strip()
+            readme_content = str(payload.get("readme_content", ""))
+            summary = str(payload.get("summary", ""))
+            if not owner or not repo or not base_branch or not readme_content:
+                self._send_json(
+                    {"error": "owner, repo, base_branch, readme_content are required"},
+                    HTTPStatus.BAD_REQUEST,
+                )
+                return
+            session_token = str(self._session().get("github_access_token") or "")
+            result = asyncio.run(
+                readme_review.apply_readme_update(
+                    owner,
+                    repo,
+                    base_branch,
+                    readme_content,
+                    summary,
                     installation_id=installation_id,
                     session_token=session_token,
                 )
