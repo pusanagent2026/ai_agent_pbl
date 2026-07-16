@@ -3,17 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>GitHub AI Agent</title>
+  <title>DEVFLOW AI Agent</title>
   <link rel="stylesheet" href="/assets/style.css" />
 </head>
 <body>
   <div class="shell is-hidden" id="appShell">
     <aside>
       <div class="brand-block">
-        <div class="brand-mark">AI</div>
         <div>
-          <h1>GitHub AI Agent</h1>
-          <p class="muted">GitHub 기록에서 팀원과 작업 성향을 읽고, 승인된 작업만 Notion과 Google Calendar에 등록합니다.</p>
+          <h1>DEVFLOW AI Agent</h1>
         </div>
       </div>
 
@@ -22,34 +20,33 @@
         <strong id="repo">loading...</strong>
         <select id="repoSelect" hidden></select>
         <div class="connect-row">
-          <a class="link-button" id="connectGithub" href="/auth/github">GitHub 연결</a>
-          <a class="link-button" id="installGithub" href="/auth/github/install" hidden>앱 설치</a>
-          <a class="link-button" id="connectNotion" href="/auth/notion">Notion 연결</a>
-          <a class="link-button" id="connectGoogle" href="/auth/google">Google Calendar 연결</a>
+          <a class="link-button service-card github-card" id="connectGithub" href="/auth/github">
+            <span class="service-icon">GH</span>
+            <span class="service-label">GitHub 연결</span>
+            <span class="service-status">연결됨</span>
+          </a>
+          <a class="link-button service-card notion-card" id="connectNotion" href="/auth/notion">
+            <span class="service-icon">N</span>
+            <span class="service-label">Notion 연결</span>
+            <span class="service-status">연결됨</span>
+          </a>
+          <a class="link-button service-card calendar-card" id="connectGoogle" href="/auth/google">
+            <span class="service-icon">31</span>
+            <span class="service-label">Google Calendar 연결</span>
+            <span class="service-status">연결됨</span>
+          </a>
         </div>
-        <div class="chips">
-          <span class="chip" id="backend">backend</span>
-          <span class="chip" id="model">model</span>
-          <span class="chip" id="notion">notion</span>
-          <span class="chip" id="calendar">calendar</span>
+        <div class="notion-settings">
+          <div class="notion-settings-title">Notion 설정</div>
+          <label class="field" id="notionDatabaseField" hidden>
+            Notion Database
+            <select id="notionDatabaseSelect"></select>
+          </label>
+          <label class="field" id="notionPageField" hidden>
+            Notion Page
+            <select id="notionPageSelect"></select>
+          </label>
         </div>
-        <label class="field" id="notionDatabaseField" hidden>
-          Notion Database
-          <select id="notionDatabaseSelect"></select>
-        </label>
-        <label class="field" id="notionPageField" hidden>
-          Notion Page
-          <select id="notionPageSelect"></select>
-        </label>
-        <label class="field" id="notionSaveModeField" hidden>
-          Notion 저장 방식
-          <select id="notionSaveMode">
-            <option value="database">DB에 작업 행으로 등록</option>
-            <option value="page">페이지에 분석 기록으로 저장</option>
-            <option value="checklist">페이지에 체크리스트로 저장</option>
-          </select>
-        </label>
-        <button class="example" id="createNotionDatabase" type="button" hidden>Notion 작업 DB 자동 생성</button>
         <div class="members">
           <span class="muted">GitHub IDs</span>
           <div class="member-list" id="members"><span class="chip">loading...</span></div>
@@ -96,14 +93,24 @@
             <h2>작업 분배</h2>
             <p class="muted">GitHub 활동을 근거로 오늘 할 일, 담당자, 마감 후보를 제안합니다.</p>
           </div>
-          <span class="status-pill" id="status">Ready</span>
+          <div class="heading-actions">
+            <div class="github-sync-card" id="githubSyncCard">
+              <span class="sync-icon">GH</span>
+              <span>
+                <strong>GitHub 연결됨</strong>
+                <small id="githubSyncTime">마지막 동기화: 확인 중</small>
+              </span>
+              <button class="sync-button" id="refreshGithubSync" type="button" title="GitHub 정보 다시 동기화">↻</button>
+            </div>
+            <span class="status-pill" id="status">Ready</span>
+          </div>
         </div>
         <section class="chat-panel">
           <div class="chat-thread" id="chatThread">
             <div class="chat-message assistant">
               <div class="chat-avatar">AI</div>
               <div class="chat-bubble">
-                <div class="chat-name">GitHub AI Agent</div>
+                <div class="chat-name">DEVFLOW AI Agent</div>
                 <div class="answer" id="answer">아직 분석 결과가 없습니다. 아래 입력창에 프로젝트 질문을 입력하면 GitHub 기록을 확인해 답변합니다.</div>
               </div>
             </div>
@@ -129,8 +136,11 @@
 
         <div class="results task-results">
           <section>
-            <h2>Proposed Tasks</h2>
-            <div id="tasks" class="muted">승인 전에는 Notion이나 Calendar에 아무것도 저장되지 않습니다.</div>
+            <h2 class="section-title-icon"><span class="title-icon">✓</span>Proposed Tasks</h2>
+            <div id="tasks" class="task-empty-state">
+              <span class="empty-illustration">☑</span>
+              <span>승인 전에는 Notion이나 Calendar에 아무것도 저장되지 않습니다.</span>
+            </div>
           </section>
         </div>
       </div>
