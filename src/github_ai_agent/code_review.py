@@ -125,7 +125,6 @@ async def review_file(
             },
         ],
         response_format={"type": "json_object"},
-        temperature=0.2,
     )
     result = _parse_review_json(completion.choices[0].message.content or "")
     result["files_reviewed"] = [path]

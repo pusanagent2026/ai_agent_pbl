@@ -190,6 +190,94 @@
     }
     section { padding: 18px; min-width: 0; overflow: auto; }
     .answer { white-space: pre-wrap; word-break: keep-all; overflow-wrap: anywhere; }
+    .chat-panel { display: grid; gap: 14px; }
+    .chat-thread {
+      display: grid;
+      gap: 14px;
+      align-content: start;
+      min-height: 260px;
+      max-height: 540px;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    .chat-message {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .chat-message.user {
+      justify-content: flex-end;
+    }
+    .chat-avatar {
+      flex: 0 0 34px;
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 900;
+      box-shadow: 0 8px 18px rgba(15,118,110,.16);
+    }
+    .chat-message.user .chat-avatar {
+      background: #eef2f6;
+      color: var(--text);
+    }
+    .chat-bubble {
+      max-width: min(720px, calc(100% - 48px));
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: 0 10px 26px rgba(37,53,67,.06);
+    }
+    .chat-message.assistant .chat-bubble {
+      border-top-left-radius: 6px;
+      background: linear-gradient(180deg, #ffffff, #f8fbfa);
+    }
+    .chat-message.user .chat-bubble {
+      border-top-right-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .chat-name {
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 850;
+    }
+    .chat-message.user .chat-name {
+      color: rgba(255,255,255,.8);
+    }
+    .chat-composer {
+      display: grid;
+      gap: 10px;
+      padding-top: 4px;
+    }
+    .compact-field { max-width: 280px; }
+    .chat-input-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+    }
+    .chat-input-shell textarea {
+      min-height: 76px;
+      resize: vertical;
+    }
+    .send-button {
+      min-width: 86px;
+      min-height: 48px;
+    }
+    .chat-actions {
+      margin-top: 0;
+    }
+    .task-results {
+      grid-template-columns: 1fr;
+    }
     .task { padding: 13px; margin-bottom: 10px; box-shadow: none; }
     .task-head { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; margin-bottom: 8px; }
     .task-title { font-weight: 850; overflow-wrap: anywhere; }

@@ -197,7 +197,6 @@ def layer3_llm_judge(
     response = call_openai_with_retry(
         client,
         model=FILTER_MODEL,
-        temperature=0,
         max_tokens=5,
         messages=[
             {
@@ -254,7 +253,6 @@ def rewrite_readme(
     response = call_openai_with_retry(
         client,
         model=REWRITE_MODEL,
-        temperature=0.2,
         messages=[
             {
                 "role": "system",

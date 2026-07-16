@@ -11,7 +11,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 import urllib.request
 
 from dotenv import load_dotenv
@@ -195,7 +195,9 @@ class AppHandler(BaseHTTPRequestHandler):
 
     def _handle_calendar_events(self) -> None:
         try:
-            google_access_token = str(self._session().get("google_access_token") or "")
+            session = self._session()
+            google_access_token = str(session.get("google_access_token") or "")
+            google_email = str(session.get("google_email") or "")
             if not google_access_token:
                 self._send_json(
                     {"error": "Google Calendar 연결 후 다시 시도해 주세요."},
@@ -205,7 +207,7 @@ class AppHandler(BaseHTTPRequestHandler):
             calendar = GoogleCalendarToolClient(mcp_auth_token=google_access_token or None)
             self._send_json(
                 {
-                    "calendar_url": "https://calendar.google.com/calendar/u/0/r",
+                    "calendar_url": _google_calendar_url(google_email),
                     "events": calendar.list_upcoming_events(),
                 }
             )
@@ -882,10 +884,10 @@ MCP backend에서는 사용 가능한 GitHub MCP tool 목록을 보고 필요한
 9. 사용자가 작업 배분이나 오늘 할 일을 물었다면 proposed_tasks에 담당자, 담당자 GitHub ID, 마감일 due를 포함한 작업 후보를 최대 5개 넣습니다.
 10. Notion과 Google Calendar에는 아직 저장하지 않습니다. 저장은 사용자가 UI에서 승인 버튼을 누른 뒤에만 실행됩니다.
 
-반드시 아래 JSON 형식만 출력하세요.
+반드시 아래 JSON 형식만 출력하세요. JSON 바깥에는 어떤 설명도 쓰지 마세요.
 
 {{
-  "answer": "번호가 붙은 한국어 분석 결과",
+  "answer": "현재 상태\n1. 확인한 GitHub 근거...\n\nAgent의 판단\n1. 판단 내용...\n\n실행 계획\n1. [High / 예상 2시간] 작업명 - 근거...\n\n실행한 작업\n1. 실제로 확인한 도구와 결과...\n\n사용자 승인이 필요한 작업\n1. Notion 저장, Calendar 등록 등 승인 필요한 작업...\n\n다음 권장 행동\n1. 바로 할 일...",
   "proposed_tasks": [
     {{
       "title": "구체적인 할 일 제목",
@@ -900,7 +902,14 @@ MCP backend에서는 사용 가능한 GitHub MCP tool 목록을 보고 필요한
   ]
 }}
 
-answer는 긴 한 문단으로 이어 쓰지 말고, 내용별로 1., 2., 3.처럼 번호를 매겨 읽기 쉽게 작성하세요.
+answer 작성 규칙:
+1. answer는 반드시 위 예시처럼 "현재 상태", "Agent의 판단", "실행 계획", "실행한 작업", "사용자 승인이 필요한 작업", "다음 권장 행동" 섹션을 모두 포함합니다.
+2. 각 섹션 제목 앞뒤에는 줄바꿈을 넣습니다.
+3. 한 문단 안에 1. 2. 3.을 이어 쓰지 않습니다.
+4. 각 번호 항목은 반드시 새 줄에서 시작합니다.
+5. 실행 계획의 작업 항목에는 우선순위, 예상 시간, 근거를 같이 씁니다.
+6. 실제로 호출하지 않은 도구나 확인하지 않은 정보는 실행한 작업에 쓰지 않습니다.
+7. Notion 저장이나 Calendar 등록은 승인 전에는 실행하지 않았다고 명확히 씁니다.
 """
 
 
@@ -910,6 +919,13 @@ def _base_url() -> str:
 
 def _notion_base_url() -> str:
     return os.environ.get("NOTION_REDIRECT_BASE_URL", "http://localhost:8787").rstrip("/")
+
+
+def _google_calendar_url(email: str = "") -> str:
+    base_url = "https://calendar.google.com/calendar/u/0/r"
+    if not email:
+        return base_url
+    return f"{base_url}?authuser={quote(email)}"
 
 
 def _exchange_github_code(code: str) -> str:

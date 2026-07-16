@@ -98,27 +98,36 @@
           </div>
           <span class="status-pill" id="status">Ready</span>
         </div>
-        <div class="composer">
-          <label class="field">
-            프로젝트 전체 마감일
-            <input id="projectDeadline" type="date" />
-          </label>
-          <textarea id="question" placeholder="예: 할 일을 팀원들에게 배분해줘"></textarea>
-          <div class="actions">
-            <span class="muted">승인 전에는 외부 서비스에 저장하지 않습니다.</span>
-            <div class="button-row">
-              <button class="primary" id="analyze">Analyze GitHub</button>
-              <button class="approve" id="approveNotion" disabled>Notion 등록</button>
-              <button class="approve" id="approveCalendar" disabled>Calendar 등록</button>
+        <section class="chat-panel">
+          <div class="chat-thread" id="chatThread">
+            <div class="chat-message assistant">
+              <div class="chat-avatar">AI</div>
+              <div class="chat-bubble">
+                <div class="chat-name">GitHub AI Agent</div>
+                <div class="answer" id="answer">아직 분석 결과가 없습니다. 아래 입력창에 프로젝트 질문을 입력하면 GitHub 기록을 확인해 답변합니다.</div>
+              </div>
             </div>
           </div>
-        </div>
+          <div class="chat-composer">
+            <label class="field compact-field">
+              프로젝트 전체 마감일
+              <input id="projectDeadline" type="date" />
+            </label>
+            <div class="chat-input-shell">
+              <textarea id="question" placeholder="예: 우리 팀 지금 뭐부터 해야 해?"></textarea>
+              <button class="primary send-button" id="analyze">전송</button>
+            </div>
+            <div class="actions chat-actions">
+              <span class="muted">승인 전에는 외부 서비스에 저장하지 않습니다.</span>
+              <div class="button-row">
+                <button class="approve" id="approveNotion" disabled>Notion 등록</button>
+                <button class="approve" id="approveCalendar" disabled>Calendar 등록</button>
+              </div>
+            </div>
+          </div>
+        </section>
 
-        <div class="results">
-          <section>
-            <h2>AI Analysis</h2>
-            <div class="answer" id="answer">아직 분석 결과가 없습니다.</div>
-          </section>
+        <div class="results task-results">
           <section>
             <h2>Proposed Tasks</h2>
             <div id="tasks" class="muted">승인 전에는 Notion이나 Calendar에 아무것도 저장되지 않습니다.</div>
