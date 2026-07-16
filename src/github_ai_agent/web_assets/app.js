@@ -364,7 +364,7 @@ const question = document.querySelector("#question");
       startPushPolling();
     });
 
-    function switchTab(target) {
+    async function switchTab(target) {
       taskPlannerView.hidden = target !== "taskPlanner";
       codeReviewView.hidden = target !== "codeReview";
       readmeUpdateView.hidden = target !== "readmeUpdate";
@@ -375,7 +375,9 @@ const question = document.querySelector("#question");
         loadBranches();
       }
       if (target === "readmeUpdate" && !readmeBranchesLoaded) {
-        loadReadmeBranches();
+        // Callers set the branch right after this returns, so the options must
+        // exist by then — a bare call would let them run against an empty select.
+        await loadReadmeBranches();
       }
     }
 
@@ -932,12 +934,25 @@ const question = document.querySelector("#question");
       localStorage.setItem(baselineStorageKey(), JSON.stringify(branchShaBaseline));
     }
 
+    function readmeNotificationText(branch, payload) {
+      if (branch !== "main") {
+        return `push하여 '${branch}'에서 README를 갱신했습니다`;
+      }
+      if (!payload.relevant) {
+        return "main이 병합되었습니다 — README와 무관한 변경입니다";
+      }
+      if (!payload.changed) {
+        return "main이 병합되었습니다 — README 변경 사항이 없습니다";
+      }
+      return "main이 병합되어 README 갱신이 필요합니다";
+    }
+
     function addPushNotification(branch, payload) {
       const el = document.createElement("div");
       el.className = "push-notification";
-      el.textContent = `push하여 '${branch}'에서 README를 갱신했습니다`;
-      el.addEventListener("click", () => {
-        switchTab("readmeUpdate");
+      el.textContent = readmeNotificationText(branch, payload);
+      el.addEventListener("click", async () => {
+        await switchTab("readmeUpdate");
         readmeBranchSelect.value = branch;
         applyReadmeAnalysisResult(branch, payload);
         el.remove();
@@ -982,7 +997,7 @@ const question = document.querySelector("#question");
         } catch (_) {
           continue;
         }
-        if (payload && payload.changed) {
+        if (payload && (b.name === "main" || payload.changed)) {
           addPushNotification(b.name, payload);
         }
       }
