@@ -57,6 +57,7 @@ HTML = r"""<!doctype html>
     .shell { display: grid; grid-template-columns: 420px minmax(0, 1fr); min-height: 100vh; }
     aside { border-right: 1px solid var(--line); background: #eef3f6; padding: 24px; }
     main { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 18px; padding: 24px; }
+    .main-header { display: flex; flex-direction: column; gap: 10px; }
     h1 { margin: 0 0 10px; font-size: 24px; line-height: 1.2; letter-spacing: 0; }
     h2 { margin: 0 0 12px; font-size: 16px; letter-spacing: 0; }
     .muted { color: var(--muted); }
@@ -260,11 +261,13 @@ HTML = r"""<!doctype html>
     </aside>
 
     <main>
-      <div id="pushNotifications" class="push-notifications"></div>
-      <div class="tabs">
-        <button class="tab-button active" id="tabTaskPlanner" type="button">작업 분배</button>
-        <button class="tab-button" id="tabCodeReview" type="button">코드 리뷰</button>
-        <button class="tab-button" id="tabReadmeUpdate" type="button">README 갱신</button>
+      <div class="main-header">
+        <div id="pushNotifications" class="push-notifications"></div>
+        <div class="tabs">
+          <button class="tab-button active" id="tabTaskPlanner" type="button">작업 분배</button>
+          <button class="tab-button" id="tabCodeReview" type="button">코드 리뷰</button>
+          <button class="tab-button" id="tabReadmeUpdate" type="button">README 갱신</button>
+        </div>
       </div>
 
       <div id="taskPlannerView">
