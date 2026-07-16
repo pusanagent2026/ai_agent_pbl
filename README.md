@@ -161,7 +161,9 @@ src/github_ai_agent/
   prompts.py                # GitHub 도메인 system prompt
   code_review.py            # 코드 리뷰 탭 도메인 로직
   readme_review.py          # README 갱신 탭 도메인 로직 (분석 + PR 생성)
-  readme_updater.py         # README 갱신 여부 판단/재작성 LLM 로직
+  readme_updater.py         # README 갱신 여부 판단/재작성 LLM 로직 (scripts/update_readme.py와 공유)
+  session_store.py          # 세션 저장소 (SQLite + Fernet). 아직 web.py에 연결되지 않은 준비 코드
+  session_store_schema.sql  # 세션 저장소 스키마
 ```
 
 `cli.py`와 `web.py` 둘 다 도메인 tool client(GitHub/Notion/Calendar)를 직접 조합해서 `GitHubToolChoosingAgent`를 호출합니다. 별도 라우팅 계층(오케스트레이터) 없이, 어떤 tool을 쓸지는 `CombinedToolClient`에 넘긴 tool 목록과 (web.py의 경우) UI에서 사용자가 누른 승인 버튼으로 결정됩니다.
