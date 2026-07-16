@@ -1290,10 +1290,23 @@ HTML = r"""<!doctype html>
       localStorage.setItem(baselineStorageKey(), JSON.stringify(branchShaBaseline));
     }
 
+    function readmeNotificationText(branch, payload) {
+      if (branch !== "main") {
+        return `push하여 '${branch}'에서 README를 갱신했습니다`;
+      }
+      if (!payload.relevant) {
+        return "main이 병합되었습니다 — README와 무관한 변경입니다";
+      }
+      if (!payload.changed) {
+        return "main이 병합되었습니다 — README 변경 사항이 없습니다";
+      }
+      return "main이 병합되어 README 갱신이 필요합니다";
+    }
+
     function addPushNotification(branch, payload) {
       const el = document.createElement("div");
       el.className = "push-notification";
-      el.textContent = `push하여 '${branch}'에서 README를 갱신했습니다`;
+      el.textContent = readmeNotificationText(branch, payload);
       el.addEventListener("click", () => {
         switchTab("readmeUpdate");
         readmeBranchSelect.value = branch;
@@ -1340,7 +1353,7 @@ HTML = r"""<!doctype html>
         } catch (_) {
           continue;
         }
-        if (payload && payload.changed) {
+        if (payload && (b.name === "main" || payload.changed)) {
           addPushNotification(b.name, payload);
         }
       }

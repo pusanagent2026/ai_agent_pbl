@@ -1,7 +1,6 @@
-"""LLM logic shared by scripts/update_readme.py (GitHub Actions) and the web
-UI's "README 갱신" tab: judge whether a diff needs a README update, and
-rewrite the README when it does. Diff/file-listing is deliberately left to
-the caller (local git in the Actions script, GitHub REST API in the web UI).
+"""LLM logic for the web UI's "README 갱신" tab: judge whether a diff needs a
+README update, and rewrite the README when it does. Diff/file-listing is
+deliberately left to the caller (GitHub REST API in the web UI).
 
 The "does this need a README update?" judgment is a 3-layer filter, cheapest
 first, so the LLM (layer 3) is only called for genuinely ambiguous changes:
