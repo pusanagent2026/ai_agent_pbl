@@ -3,7 +3,8 @@ const question = document.querySelector("#question");
     const analyze = document.querySelector("#analyze");
     const approveNotion = document.querySelector("#approveNotion");
     const approveCalendar = document.querySelector("#approveCalendar");
-    const answer = document.querySelector("#answer");
+    let answer = document.querySelector("#answer");
+    const chatThread = document.querySelector("#chatThread");
     const tasks = document.querySelector("#tasks");
     const status = document.querySelector("#status");
     const repoSelect = document.querySelector("#repoSelect");
@@ -49,6 +50,7 @@ const question = document.querySelector("#question");
     let proposedTasks = [];
     let notionEnabled = false;
     let calendarEnabled = false;
+    let connectedGoogleUser = "";
     let selectedRepository = { owner: "", repo: "", installation_id: "" };
     let branchesLoaded = false;
     let currentBranch = "";
@@ -82,7 +84,8 @@ const question = document.querySelector("#question");
         answer.innerHTML = "<span class='error'>GitHub \uC5F0\uACB0 \uD6C4 \uC800\uC7A5\uC18C\uB97C \uC120\uD0DD\uD574\uC57C \uBD84\uC11D\uC744 \uC2DC\uC791\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.</span>";
       }
       connectGithub.textContent = selectedRepoLabel || (githubConnected ? `@${config.github_user}` : "GitHub \uC5F0\uACB0");
-      connectGoogle.textContent = config.google_user ? `Calendar: ${config.google_user}` : "Google Calendar \uC5F0\uACB0";
+      connectedGoogleUser = config.google_user || "";
+      connectGoogle.textContent = connectedGoogleUser ? `Calendar: ${connectedGoogleUser}` : "Google Calendar \uC5F0\uACB0";
       installGithub.hidden = Boolean((config.repositories || []).length);
       document.querySelector("#backend").textContent = config.backend;
       document.querySelector("#model").textContent = config.model;
@@ -99,7 +102,7 @@ const question = document.querySelector("#question");
       document.querySelector("#calendar").textContent = calendarEnabled ? "calendar on" : "calendar off";
       renderNotionDatabases(config.notion_databases || [], config.notion_database_id || "", Boolean(config.notion_workspace));
       renderNotionPages(config.notion_pages || [], config.notion_page_id || "", Boolean(config.notion_workspace));
-      googleCalendarLink.href = calendarEnabled ? "https://calendar.google.com/calendar/u/0/r" : "/auth/google";
+      googleCalendarLink.href = calendarEnabled ? googleCalendarUrl(connectedGoogleUser) : "/auth/google";
       await loadCalendarEvents();
       renderMembers(config.members || [], config.member_warnings || []);
       if (selectedRepository.owner !== config.owner || selectedRepository.repo !== config.repo) {
@@ -185,7 +188,7 @@ const question = document.querySelector("#question");
         const item = document.createElement(event.html_link ? "a" : "div");
         item.className = "calendar-event";
         if (event.html_link) {
-          item.href = event.html_link;
+          item.href = withGoogleAuthUser(event.html_link, connectedGoogleUser);
           item.target = "_blank";
           item.rel = "noreferrer";
         }
@@ -236,7 +239,7 @@ const question = document.querySelector("#question");
           item.className = "mini-calendar-item";
           item.textContent = event.title || "(제목 없음)";
           if (event.html_link) {
-            item.href = event.html_link;
+            item.href = withGoogleAuthUser(event.html_link, connectedGoogleUser);
             item.target = "_blank";
             item.rel = "noreferrer";
           }
@@ -622,6 +625,66 @@ const question = document.querySelector("#question");
         .replaceAll("'", "&#039;");
     }
 
+    function googleCalendarUrl(email = "") {
+      const baseUrl = "https://calendar.google.com/calendar/u/0/r";
+      return email ? `${baseUrl}?authuser=${encodeURIComponent(email)}` : baseUrl;
+    }
+
+    function withGoogleAuthUser(url, email = "") {
+      if (!url || !email) return url;
+      try {
+        const parsed = new URL(url);
+        if (parsed.hostname.endsWith("calendar.google.com")) {
+          parsed.searchParams.set("authuser", email);
+        }
+        return parsed.toString();
+      } catch {
+        return url;
+      }
+    }
+
+    function scrollChatToBottom() {
+      if (!chatThread) return;
+      chatThread.scrollTop = chatThread.scrollHeight;
+    }
+
+    function appendUserChatMessage(text) {
+      if (!chatThread) return;
+      const message = document.createElement("div");
+      message.className = "chat-message user";
+      message.innerHTML = `
+        <div class="chat-bubble">
+          <div class="chat-name">나</div>
+          <div>${escapeHtml(text)}</div>
+        </div>
+        <div class="chat-avatar">ME</div>
+      `;
+      chatThread.appendChild(message);
+      scrollChatToBottom();
+    }
+
+    function appendAssistantChatMessage(text) {
+      if (!chatThread) {
+        answer.textContent = text;
+        return answer;
+      }
+      const message = document.createElement("div");
+      message.className = "chat-message assistant";
+      message.innerHTML = `
+        <div class="chat-avatar">AI</div>
+        <div class="chat-bubble">
+          <div class="chat-name">GitHub AI Agent</div>
+          <div class="answer"></div>
+        </div>
+      `;
+      const answerEl = message.querySelector(".answer");
+      answerEl.textContent = text;
+      chatThread.appendChild(message);
+      answer = answerEl;
+      scrollChatToBottom();
+      return answerEl;
+    }
+
     function refreshApproveButtons() {
       const hasTasks = proposedTasks.length > 0;
       approveNotion.disabled = !notionEnabled || !hasTasks;
@@ -707,11 +770,12 @@ const question = document.querySelector("#question");
         question.focus();
         return;
       }
+      appendUserChatMessage(text);
+      const currentAnswer = appendAssistantChatMessage("GitHub MCP/API 기록에서 팀원, 작업 성향, 마감일 후보를 분석하는 중입니다.");
       analyze.disabled = true;
       approveNotion.disabled = true;
       approveCalendar.disabled = true;
       status.textContent = "Analyzing GitHub...";
-      answer.textContent = "GitHub MCP/API 기록에서 팀원, 작업 성향, 마감일 후보를 분석하는 중입니다.";
       tasks.innerHTML = "<span class='muted'>할 일 후보 생성 중...</span>";
 
       try {
@@ -730,13 +794,17 @@ const question = document.querySelector("#question");
         if (!response.ok) {
           throw new Error(payload.error || "Request failed");
         }
-        answer.textContent = payload.answer;
+        currentAnswer.textContent = payload.answer;
+        answer = currentAnswer;
+        scrollChatToBottom();
         renderTools(payload.selected_tools || []);
         renderTasks(payload.proposed_tasks || []);
         status.textContent = "Approval required";
       } catch (error) {
         proposedTasks = [];
-        answer.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+        currentAnswer.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;
+        answer = currentAnswer;
+        scrollChatToBottom();
         tasks.innerHTML = "<span class='muted'>할 일 후보를 만들지 못했습니다.</span>";
         status.textContent = "Error";
       } finally {

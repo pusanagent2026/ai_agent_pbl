@@ -57,7 +57,6 @@ class GitHubToolChoosingAgent:
                 messages=messages,
                 tools=openai_tools,
                 tool_choice="auto",
-                temperature=0.2,
             )
             message = completion.choices[0].message
             messages.append(message.model_dump(exclude_none=True))
@@ -105,7 +104,6 @@ class GitHubToolChoosingAgent:
                     ),
                 },
             ],
-            temperature=0.2,
         )
         return AgentResult(
             answer=final.choices[0].message.content or "",
