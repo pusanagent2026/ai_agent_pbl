@@ -50,6 +50,7 @@ class GitHubToolChoosingAgent:
         mcp: GitHubMcpClient,
         *,
         intent_input: str | None = None,
+        history: list[dict[str, str]] | None = None,
     ) -> AgentResult:
         state = self.harness.start_run(intent_input or question)
         mcp_tools = [] if state.decision.intent == Intent.CONVERSATION else await mcp.list_tools()
@@ -59,6 +60,13 @@ class GitHubToolChoosingAgent:
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt},
+        ]
+        # Recent conversation turns (sliding window) so follow-up questions
+        # keep context. Sits between the system prompt and the current
+        # question; empty/None for the first turn preserves prior behavior.
+        if history:
+            messages.extend(history)
+        messages.append(
             {
                 "role": "user",
                 "content": (
@@ -69,8 +77,8 @@ class GitHubToolChoosingAgent:
                     + "\n\n"
                     + self.harness.build_user_context(state)
                 ),
-            },
-        ]
+            }
+        )
 
         for round_index in range(self.max_tool_rounds):
             request: dict[str, Any] = {

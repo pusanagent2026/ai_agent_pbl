@@ -88,6 +88,7 @@ async def analyze_tasks(
     owner: str = "",
     repo: str = "",
     installation_id: str = "",
+    history: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     agent = GitHubToolChoosingAgent(owner=owner or None, repo=repo or None)
     analysis_prompt = build_harness_analysis_prompt(question, project_deadline)
@@ -97,6 +98,7 @@ async def analyze_tasks(
             question,
             _NoToolsClient(),
             intent_input=question,
+            history=history,
         )
     else:
         async with GitHubMcpClient(installation_id=installation_id or None) as github_tools:
@@ -104,6 +106,7 @@ async def analyze_tasks(
                 analysis_prompt,
                 github_tools,
                 intent_input=question,
+                history=history,
             )
 
     parsed = parse_task_json(result.answer)
