@@ -146,3 +146,5 @@ def clear(session_id: str) -> None:
     with _connection() as connection:
         connection.execute("DELETE FROM github_credentials WHERE session_id = ?", (session_id,))
         connection.execute("DELETE FROM google_credentials WHERE session_id = ?", (session_id,))
+        connection.execute("DELETE FROM notion_credentials WHERE session_id = ?", (session_id,))
+        connection.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))

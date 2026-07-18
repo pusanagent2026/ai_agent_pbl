@@ -1,228 +1,343 @@
 <!doctype html>
 <html lang="ko">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DEVFLOW AI Agent</title>
-  <link rel="stylesheet" href="/assets/style.css" />
-</head>
-<body>
-  <div class="shell is-hidden" id="appShell">
-    <aside>
-      <div class="brand-block">
-        <div>
-          <h1>DEVFLOW AI Agent</h1>
-        </div>
-      </div>
-
-      <div class="repo">
-        <span class="muted">Repository</span>
-        <strong id="repo">loading...</strong>
-        <select id="repoSelect" hidden></select>
-        <div class="connect-row">
-          <a class="link-button service-card github-card" id="connectGithub" href="/auth/github">
-            <span class="service-icon">GH</span>
-            <span class="service-label">GitHub 연결</span>
-            <span class="service-status">연결됨</span>
-          </a>
-          <a class="link-button service-card notion-card" id="connectNotion" href="/auth/notion">
-            <span class="service-icon">N</span>
-            <span class="service-label">Notion 연결</span>
-            <span class="service-status">연결됨</span>
-          </a>
-          <a class="link-button service-card calendar-card" id="connectGoogle" href="/auth/google">
-            <span class="service-icon">31</span>
-            <span class="service-label">Google Calendar 연결</span>
-            <span class="service-status">연결됨</span>
-          </a>
-        </div>
-        <div class="notion-settings">
-          <div class="notion-settings-title">Notion 설정</div>
-          <label class="field" id="notionDatabaseField" hidden>
-            Notion Database
-            <select id="notionDatabaseSelect"></select>
-          </label>
-          <label class="field" id="notionPageField" hidden>
-            Notion Page
-            <select id="notionPageSelect"></select>
-          </label>
-        </div>
-        <div class="members">
-          <span class="muted">GitHub IDs</span>
-          <div class="member-list" id="members"><span class="chip">loading...</span></div>
-        </div>
-        <div class="calendar-panel">
-          <div class="calendar-head">
-            <span class="muted">Google Calendar</span>
-            <a class="calendar-link" id="googleCalendarLink" href="https://calendar.google.com/calendar/u/0/r" target="_blank" rel="noreferrer">열기</a>
-          </div>
-          <div class="calendar-view-toggle">
-            <button class="active" id="calendarListView" type="button">목록</button>
-            <button id="calendarMonthView" type="button">달력</button>
-          </div>
-          <div class="calendar-events" id="calendarEvents"><span class="chip">연결 대기</span></div>
-        </div>
-      </div>
-
-      <div class="side-section-title">
-        <span>Examples</span>
-        <small>빠른 질문</small>
-      </div>
-      <div class="examples">
-        <button class="example" data-question="우리 팀 누구누구 있어?">우리 팀 누구누구 있어?</button>
-        <button class="example" data-question="할 일을 팀원들에게 배분해줘">할 일을 팀원들에게 배분해줘</button>
-        <button class="example" data-question="각자 최근에 많이 한 작업 기준으로 오늘 할 일을 나눠줘">작업 성향 기준으로 할 일 분담</button>
-        <button class="example" data-question="오늘 뭐부터 하면 좋을까?">오늘 뭐부터 하면 좋을까?</button>
-      </div>
-    </aside>
-
-    <main>
-      <div class="main-header">
-        <div id="pushNotifications" class="push-notifications"></div>
-        <div class="tabs">
-          <button class="tab-button active" id="tabTaskPlanner" type="button">작업 분배</button>
-          <button class="tab-button" id="tabCodeReview" type="button">코드 리뷰</button>
-          <button class="tab-button" id="tabReadmeUpdate" type="button">README 갱신</button>
-        </div>
-      </div>
-
-      <div id="taskPlannerView">
-        <div class="view-heading">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DEVFLOW AI Agent</title>
+    <link rel="stylesheet" href="/assets/style.css" />
+  </head>
+  <body>
+    <div class="shell is-hidden" id="appShell">
+      <aside>
+        <div class="brand-block">
           <div>
-            <span class="eyebrow">Daily Briefing</span>
-            <h2>작업 분배</h2>
-            <p class="muted">GitHub 활동을 근거로 오늘 할 일, 담당자, 마감 후보를 제안합니다.</p>
-          </div>
-          <div class="heading-actions">
-            <div class="github-sync-card" id="githubSyncCard">
-              <span class="sync-icon">GH</span>
-              <span>
-                <strong>GitHub 연결됨</strong>
-                <small id="githubSyncTime">마지막 동기화: 확인 중</small>
-              </span>
-              <button class="sync-button" id="refreshGithubSync" type="button" title="GitHub 정보 다시 동기화">↻</button>
-            </div>
-            <span class="status-pill" id="status">Ready</span>
+            <h1>DEVFLOW AI Agent</h1>
           </div>
         </div>
-        <section class="chat-panel">
-          <div class="chat-thread" id="chatThread">
-            <div class="chat-message assistant">
-              <div class="chat-avatar">AI</div>
-              <div class="chat-bubble">
-                <div class="chat-name">DEVFLOW AI Agent</div>
-                <div class="answer" id="answer">아직 분석 결과가 없습니다. 아래 입력창에 프로젝트 질문을 입력하면 GitHub 기록을 확인해 답변합니다.</div>
-              </div>
-            </div>
+
+        <div class="repo">
+          <span class="muted">Repository</span>
+          <strong id="repo">loading...</strong>
+          <select id="repoSelect" hidden></select>
+          <div class="connect-row">
+            <a
+              class="link-button service-card github-card"
+              id="connectGithub"
+              href="/auth/github"
+            >
+              <span class="service-icon">GH</span>
+              <span class="service-label">GitHub 연결</span>
+              <span class="service-status">연결됨</span>
+            </a>
+            <a
+              class="link-button service-card notion-card"
+              id="connectNotion"
+              href="/auth/notion"
+            >
+              <span class="service-icon">N</span>
+              <span class="service-label">Notion 연결</span>
+              <span class="service-status">연결됨</span>
+            </a>
+            <a
+              class="link-button service-card calendar-card"
+              id="connectGoogle"
+              href="/auth/google"
+            >
+              <span class="service-icon">31</span>
+              <span class="service-label">Google Calendar 연결</span>
+              <span class="service-status">연결됨</span>
+            </a>
           </div>
-          <div class="chat-composer">
-            <label class="field compact-field">
-              프로젝트 전체 마감일
-              <input id="projectDeadline" type="date" />
+          <div class="notion-settings">
+            <div class="notion-settings-title">Notion 설정</div>
+            <label class="field" id="notionDatabaseField" hidden>
+              Notion Database
+              <select id="notionDatabaseSelect"></select>
             </label>
-            <div class="chat-input-shell">
-              <textarea id="question" placeholder="예: 우리 팀 지금 뭐부터 해야 해?"></textarea>
-              <button class="primary send-button" id="analyze">전송</button>
+            <label class="field" id="notionPageField" hidden>
+              Notion Page
+              <select id="notionPageSelect"></select>
+            </label>
+          </div>
+          <div class="members">
+            <span class="muted">GitHub IDs</span>
+            <div class="member-list" id="members">
+              <span class="chip">loading...</span>
             </div>
-            <div class="actions chat-actions">
-              <span class="muted">승인 전에는 외부 서비스에 저장하지 않습니다.</span>
+          </div>
+          <div class="calendar-panel">
+            <div class="calendar-head">
+              <span class="muted">Google Calendar</span>
+              <a
+                class="calendar-link"
+                id="googleCalendarLink"
+                href="https://calendar.google.com/calendar/u/0/r"
+                target="_blank"
+                rel="noreferrer"
+                >열기</a
+              >
+            </div>
+            <div class="calendar-view-toggle">
+              <button class="active" id="calendarListView" type="button">
+                목록
+              </button>
+              <button id="calendarMonthView" type="button">달력</button>
+            </div>
+            <div class="calendar-events" id="calendarEvents">
+              <span class="chip">연결 대기</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="side-section-title">
+          <span>Examples</span>
+          <small>빠른 질문</small>
+        </div>
+        <div class="examples">
+          <button class="example" data-question="우리 팀 누구누구 있어?">
+            우리 팀 누구누구 있어?
+          </button>
+          <button class="example" data-question="할 일을 팀원들에게 배분해줘">
+            할 일을 팀원들에게 배분해줘
+          </button>
+          <button
+            class="example"
+            data-question="각자 최근에 많이 한 작업 기준으로 오늘 할 일을 나눠줘"
+          >
+            작업 성향 기준으로 할 일 분담
+          </button>
+          <button class="example" data-question="오늘 뭐부터 하면 좋을까?">
+            오늘 뭐부터 하면 좋을까?
+          </button>
+        </div>
+        <a class="logout-button" id="logoutButton" href="/logout">
+          <span class="logout-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path d="M10 5H6.8A1.8 1.8 0 0 0 5 6.8v10.4A1.8 1.8 0 0 0 6.8 19H10M14.5 8.5 18 12l-3.5 3.5M9 12h9" />
+            </svg>
+          </span>
+          <span class="logout-copy">
+            <strong>로그아웃</strong>
+            <small>연결된 계정에서 나가기</small>
+          </span>
+          <span class="logout-arrow" aria-hidden="true">›</span>
+        </a>
+      </aside>
+
+      <main>
+        <div class="main-header">
+          <div id="pushNotifications" class="push-notifications"></div>
+          <div class="tabs">
+            <button class="tab-button active" id="tabTaskPlanner" type="button">
+              작업 분배
+            </button>
+            <button class="tab-button" id="tabCodeReview" type="button">
+              코드 리뷰
+            </button>
+            <button class="tab-button" id="tabReadmeUpdate" type="button">
+              README 갱신
+            </button>
+          </div>
+        </div>
+
+        <div id="taskPlannerView">
+          <div class="view-heading">
+            <div>
+              <span class="eyebrow">Daily Briefing</span>
+              <h2>작업 분배</h2>
+              <p class="muted">
+                GitHub 활동을 근거로 오늘 할 일, 담당자, 마감 후보를 제안합니다.
+              </p>
+            </div>
+            <div class="heading-actions">
+              <div class="github-sync-card" id="githubSyncCard">
+                <span class="sync-icon">GH</span>
+                <span>
+                  <strong>GitHub 연결됨</strong>
+                  <small id="githubSyncTime">마지막 동기화: 확인 중</small>
+                </span>
+                <button
+                  class="sync-button"
+                  id="refreshGithubSync"
+                  type="button"
+                  title="GitHub 정보 다시 동기화"
+                >
+                  ↻
+                </button>
+              </div>
+              <span class="status-pill" id="status">Ready</span>
+            </div>
+          </div>
+          <section class="chat-panel">
+            <div class="chat-thread" id="chatThread">
+              <div class="chat-message assistant">
+                <div class="chat-avatar">AI</div>
+                <div class="chat-bubble">
+                  <div class="chat-name">DEVFLOW AI Agent</div>
+                  <div class="answer" id="answer">
+                    아직 분석 결과가 없습니다. 아래 입력창에 프로젝트 질문을
+                    입력하면 GitHub 기록을 확인해 답변합니다.
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="chat-composer">
+              <label class="field compact-field">
+                프로젝트 전체 마감일
+                <input id="projectDeadline" type="date" />
+              </label>
+              <div class="chat-input-shell">
+                <textarea
+                  id="question"
+                  placeholder="예: 우리 팀 지금 뭐부터 해야 해?"
+                ></textarea>
+                <button class="primary send-button" id="analyze">전송</button>
+              </div>
+              <div class="actions chat-actions">
+                <span class="muted"
+                  >승인 전에는 외부 서비스에 저장하지 않습니다.</span
+                >
+                <div class="button-row">
+                  <button class="approve" id="approveNotion" disabled>
+                    Notion 등록
+                  </button>
+                  <button class="approve" id="approveCalendar" disabled>
+                    Calendar 등록
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <div class="results task-results">
+            <section>
+              <h2 class="section-title-icon">
+                <span class="title-icon">✓</span>Proposed Tasks
+              </h2>
+              <div id="tasks" class="task-empty-state">
+                <span class="empty-illustration">☑</span>
+                <span
+                  >승인 전에는 Notion이나 Calendar에 아무것도 저장되지
+                  않습니다.</span
+                >
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div id="codeReviewView" hidden>
+          <div class="view-heading">
+            <div>
+              <span class="eyebrow">Repository Review</span>
+              <h2>코드 리뷰</h2>
+              <p class="muted">
+                브랜치와 파일을 선택해 리뷰 요약, 오류, 개선 코멘트를
+                생성합니다.
+              </p>
+            </div>
+            <span class="status-pill" id="reviewStatus">Ready</span>
+          </div>
+          <div class="composer">
+            <div class="review-select-row">
+              <select id="branchSelect">
+                <option value="">브랜치를 불러오는 중...</option>
+              </select>
+              <input
+                id="fileFilter"
+                type="text"
+                placeholder="파일 경로 필터 (예: agent.py)"
+              />
+            </div>
+            <div id="fileList" class="file-list muted">
+              브랜치를 선택하면 파일 목록이 표시됩니다.
+            </div>
+            <div class="actions">
+              <span class="muted"
+                >리뷰 결과는 필요할 때 Notion에 저장할 수 있습니다.</span
+              >
               <div class="button-row">
-                <button class="approve" id="approveNotion" disabled>Notion 등록</button>
-                <button class="approve" id="approveCalendar" disabled>Calendar 등록</button>
+                <button class="primary" id="reviewFile" disabled>
+                  Review File
+                </button>
+                <button class="approve" id="saveReviewNotion" disabled>
+                  Notion에 리뷰 저장
+                </button>
               </div>
             </div>
           </div>
-        </section>
 
-        <div class="results task-results">
-          <section>
-            <h2 class="section-title-icon"><span class="title-icon">✓</span>Proposed Tasks</h2>
-            <div id="tasks" class="task-empty-state">
-              <span class="empty-illustration">☑</span>
-              <span>승인 전에는 Notion이나 Calendar에 아무것도 저장되지 않습니다.</span>
+          <div class="results">
+            <section>
+              <h2>Summary</h2>
+              <div class="answer" id="reviewSummary">
+                아직 리뷰 결과가 없습니다.
+              </div>
+              <h2 style="margin-top: 18px">오류</h2>
+              <div id="reviewErrors" class="muted">
+                아직 리뷰하지 않았습니다.
+              </div>
+            </section>
+            <section>
+              <h2>코멘트</h2>
+              <div id="reviewComments" class="muted">
+                잘한 점과 아쉬운 점이 여기에 표시됩니다.
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div id="readmeUpdateView" hidden>
+          <div class="view-heading">
+            <div>
+              <span class="eyebrow">Documentation</span>
+              <h2>README 갱신</h2>
+              <p class="muted">
+                최신 변경이 README에 반영되어야 하는지 판단하고 PR로 제안합니다.
+              </p>
             </div>
-          </section>
-        </div>
-      </div>
-
-      <div id="codeReviewView" hidden>
-        <div class="view-heading">
-          <div>
-            <span class="eyebrow">Repository Review</span>
-            <h2>코드 리뷰</h2>
-            <p class="muted">브랜치와 파일을 선택해 리뷰 요약, 오류, 개선 코멘트를 생성합니다.</p>
+            <span class="status-pill" id="readmeStatus">Ready</span>
           </div>
-          <span class="status-pill" id="reviewStatus">Ready</span>
-        </div>
-        <div class="composer">
-          <div class="review-select-row">
-            <select id="branchSelect"><option value="">브랜치를 불러오는 중...</option></select>
-            <input id="fileFilter" type="text" placeholder="파일 경로 필터 (예: agent.py)" />
-          </div>
-          <div id="fileList" class="file-list muted">브랜치를 선택하면 파일 목록이 표시됩니다.</div>
-          <div class="actions">
-            <span class="muted">리뷰 결과는 필요할 때 Notion에 저장할 수 있습니다.</span>
-            <div class="button-row">
-              <button class="primary" id="reviewFile" disabled>Review File</button>
-              <button class="approve" id="saveReviewNotion" disabled>Notion에 리뷰 저장</button>
+          <div class="composer">
+            <div class="review-select-row">
+              <select id="readmeBranchSelect">
+                <option value="">브랜치를 불러오는 중...</option>
+              </select>
             </div>
-          </div>
-        </div>
-
-        <div class="results">
-          <section>
-            <h2>Summary</h2>
-            <div class="answer" id="reviewSummary">아직 리뷰 결과가 없습니다.</div>
-            <h2 style="margin-top:18px;">오류</h2>
-            <div id="reviewErrors" class="muted">아직 리뷰하지 않았습니다.</div>
-          </section>
-          <section>
-            <h2>코멘트</h2>
-            <div id="reviewComments" class="muted">잘한 점과 아쉬운 점이 여기에 표시됩니다.</div>
-          </section>
-        </div>
-      </div>
-
-      <div id="readmeUpdateView" hidden>
-        <div class="view-heading">
-          <div>
-            <span class="eyebrow">Documentation</span>
-            <h2>README 갱신</h2>
-            <p class="muted">최신 변경이 README에 반영되어야 하는지 판단하고 PR로 제안합니다.</p>
-          </div>
-          <span class="status-pill" id="readmeStatus">Ready</span>
-        </div>
-        <div class="composer">
-          <div class="review-select-row">
-            <select id="readmeBranchSelect"><option value="">브랜치를 불러오는 중...</option></select>
-          </div>
-          <div class="actions">
-            <span class="muted">main에 직접 반영하지 않고 PR로 검토합니다.</span>
-            <div class="button-row">
-              <button class="primary" id="analyzeReadme">Analyze README</button>
-              <button class="approve" id="applyReadmeUpdate" disabled>PR 생성</button>
+            <div class="actions">
+              <span class="muted"
+                >main에 직접 반영하지 않고 PR로 검토합니다.</span
+              >
+              <div class="button-row">
+                <button class="primary" id="analyzeReadme">
+                  Analyze README
+                </button>
+                <button class="approve" id="applyReadmeUpdate" disabled>
+                  PR 생성
+                </button>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div class="results">
-          <section>
-            <h2>판단 결과</h2>
-            <div class="answer" id="readmeVerdict">아직 분석하지 않았습니다.</div>
-          </section>
-          <section>
-            <h2>변경 사항</h2>
-            <div class="diff-header-row">
-              <span>이전 README</span>
-              <span>바뀐 README</span>
-            </div>
-            <div id="readmeDiff" class="readme-diff-grid muted">-</div>
-          </section>
+          <div class="results">
+            <section>
+              <h2>판단 결과</h2>
+              <div class="answer" id="readmeVerdict">
+                아직 분석하지 않았습니다.
+              </div>
+            </section>
+            <section>
+              <h2>변경 사항</h2>
+              <div class="diff-header-row">
+                <span>이전 README</span>
+                <span>바뀐 README</span>
+              </div>
+              <div id="readmeDiff" class="readme-diff-grid muted">-</div>
+            </section>
+          </div>
         </div>
-      </div>
-    </main>
-  </div>
+      </main>
+    </div>
 
-  <script src="/assets/app.js"></script>
-</body>
+    <script src="/assets/app.js"></script>
+  </body>
 </html>

@@ -12,35 +12,19 @@ const agentStart = document.querySelector("#agentStart");
 const onboardingStepTrack = document.querySelector("#onboardingStepTrack");
 
 function readSavedRepository(config) {
+  if (!config.github_user) {
+    sessionStorage.removeItem("onboardingSelectedRepository");
+    return { owner: "", repo: "", installation_id: "" };
+  }
   const repositories = config.repositories || [];
   const isAvailable = (repository) => {
     if (!repository || !repository.owner || !repository.repo) return false;
-    return !repositories.length || repositories.some((item) => item.owner === repository.owner && item.repo === repository.repo);
+    return repositories.some((item) => item.owner === repository.owner && item.repo === repository.repo);
   };
   try {
-    const saved = JSON.parse(localStorage.getItem("onboardingSelectedRepository") || "null");
+    const saved = JSON.parse(sessionStorage.getItem("onboardingSelectedRepository") || "null");
     if (isAvailable(saved)) return saved;
   } catch (_) {}
-  try {
-    const saved = JSON.parse(localStorage.getItem("selectedRepository") || "null");
-    if (isAvailable(saved)) {
-      localStorage.setItem("onboardingSelectedRepository", JSON.stringify(saved));
-      return saved;
-    }
-  } catch (_) {}
-  if (config.owner && config.repo) {
-    const matched = repositories.find((repository) => repository.owner === config.owner && repository.repo === config.repo);
-    const repository = {
-      owner: config.owner,
-      repo: config.repo,
-      installation_id: matched ? matched.installation_id || "" : config.installation_id || "",
-    };
-    if (isAvailable(repository)) {
-      localStorage.setItem("onboardingSelectedRepository", JSON.stringify(repository));
-      localStorage.setItem("selectedRepository", JSON.stringify(repository));
-      return repository;
-    }
-  }
   return { owner: "", repo: "", installation_id: "" };
 }
 
@@ -67,13 +51,15 @@ async function loadOnboardingConfig() {
   const response = await fetch("/api/config");
   const config = await response.json();
   const repositories = config.repositories || [];
-  const selectedRepository = readSavedRepository(config);
-  renderRepositoryPicker(repositories, selectedRepository);
-  const selectedRepoLabel = selectedRepository.owner && selectedRepository.repo ? `${selectedRepository.owner}/${selectedRepository.repo}` : "";
   const githubConnected = Boolean(config.github_user);
-  const notionEnabled = Boolean(config.notion_enabled);
-  const calendarEnabled = Boolean(config.calendar_enabled);
-  const canStart = Boolean(selectedRepoLabel);
+  const selectedRepository = readSavedRepository(config);
+  renderRepositoryPicker(githubConnected ? repositories : [], selectedRepository);
+  const selectedRepoLabel = githubConnected && selectedRepository.owner && selectedRepository.repo
+    ? `${selectedRepository.owner}/${selectedRepository.repo}`
+    : "";
+  const notionEnabled = Boolean(config.notion_connected);
+  const calendarEnabled = Boolean(config.calendar_connected);
+  const canStart = githubConnected && Boolean(selectedRepoLabel);
 
   onboardingGithubTitle.textContent = selectedRepoLabel || (githubConnected ? "GitHub \uc5f0\uacb0\ub428" : "GitHub \uc5f0\uacb0");
   onboardingGithubDesc.textContent = selectedRepoLabel
@@ -109,7 +95,7 @@ loadOnboardingConfig().catch((error) => {
 onboardingRepoSelect.addEventListener("change", () => {
   const option = onboardingRepoSelect.selectedOptions[0];
   if (!option || !option.value) {
-    localStorage.removeItem("onboardingSelectedRepository");
+    sessionStorage.removeItem("onboardingSelectedRepository");
     localStorage.removeItem("selectedRepository");
     onboardingGithubTitle.textContent = "GitHub \uc5f0\uacb0\ub428";
     onboardingGithubDesc.textContent = "\ubd84\uc11d\ud560 \uc800\uc7a5\uc18c\ub97c \uc120\ud0dd\ud574\uc8fc\uc138\uc694.";
@@ -123,7 +109,7 @@ onboardingRepoSelect.addEventListener("change", () => {
     repo: option.dataset.repo,
     installation_id: option.dataset.installationId || "",
   };
-  localStorage.setItem("onboardingSelectedRepository", JSON.stringify(repository));
+  sessionStorage.setItem("onboardingSelectedRepository", JSON.stringify(repository));
   localStorage.setItem("selectedRepository", JSON.stringify(repository));
   loadOnboardingConfig();
 });
