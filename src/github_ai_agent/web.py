@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from dotenv import load_dotenv
 from github_ai_agent import session_store
+from github_ai_agent import conversation_store
 
 from github_ai_agent import code_review
 from github_ai_agent.google_calendar_client import GoogleCalendarToolClient
@@ -192,6 +193,18 @@ class AppHandler(BaseHTTPRequestHandler):
             if not question:
                 self._send_json({"error": "question is required"}, HTTPStatus.BAD_REQUEST)
                 return
+            # Conversation memory needs a stable session id across turns. The
+            # cookie is normally set during OAuth; if this request arrived
+            # without one, mint an id now and persist it on the response so the
+            # next turn reuses it.
+            had_cookie = bool(self._cookie("github_ai_agent_session"))
+            session_id = self._session_id()
+            set_cookie = (
+                None
+                if had_cookie
+                else f"github_ai_agent_session={session_id}; Path=/; HttpOnly; SameSite=Lax"
+            )
+            history = conversation_store.load_recent(session_id)
             result = asyncio.run(
                 analyze_tasks(
                     question,
@@ -199,9 +212,13 @@ class AppHandler(BaseHTTPRequestHandler):
                     owner=owner,
                     repo=repo,
                     installation_id=installation_id,
+                    history=history,
                 )
             )
-            self._send_json(result)
+            conversation_store.append(session_id, "user", question)
+            conversation_store.append(session_id, "assistant", str(result.get("answer") or ""))
+            conversation_store.save_analysis(session_id, result.get("proposed_tasks"))
+            self._send_json(result, set_cookie=set_cookie)
         except Exception as error:
             self._send_json({"error": _friendly_error(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
@@ -688,6 +705,10 @@ class AppHandler(BaseHTTPRequestHandler):
                 session_store.clear(session_id)
             except Exception as error:
                 print(f"Session store logout cleanup failed: {error}")
+            try:
+                conversation_store.clear(session_id)
+            except Exception as error:
+                print(f"Conversation store logout cleanup failed: {error}")
 
         self.send_response(HTTPStatus.FOUND)
         self.send_header("Location", "/")
@@ -780,11 +801,19 @@ class AppHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
-    def _send_json(self, body: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
+    def _send_json(
+        self,
+        body: dict[str, Any],
+        status: HTTPStatus = HTTPStatus.OK,
+        *,
+        set_cookie: str | None = None,
+    ) -> None:
         encoded = json.dumps(body, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(encoded)))
+        if set_cookie:
+            self.send_header("Set-Cookie", set_cookie)
         self.end_headers()
         self.wfile.write(encoded)
 
