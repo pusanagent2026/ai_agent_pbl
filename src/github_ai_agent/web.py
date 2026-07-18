@@ -48,7 +48,6 @@ from github_ai_agent.webapp.task_planning import (
     create_notion_tasks,
 )
 
-SESSIONS: dict[str, dict[str, Any]] = {}
 OAUTH_STATES: dict[str, str] = {}
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -546,7 +545,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
         token = _exchange_github_code(code)
         user = _github_get("/user", token)
-        session = SESSIONS.setdefault(session_id, {})
+        session = session_store.get_or_create(session_id)
         session["github_access_token"] = token
         session["github_login"] = str(user.get("login") or "")
         self._redirect("/", session_id)
@@ -567,7 +566,7 @@ class AppHandler(BaseHTTPRequestHandler):
         installation_id = (query.get("installation_id") or [""])[0].strip()
         session_id = self._session_id()
         if installation_id:
-            SESSIONS.setdefault(session_id, {})["installation_id"] = installation_id
+            session_store.get_or_create(session_id)["installation_id"] = installation_id
         self._redirect("/", session_id)
 
     def _redirect_to_google_login(self) -> None:
@@ -619,7 +618,7 @@ class AppHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Google OAuth did not return access_token."}, HTTPStatus.BAD_REQUEST)
             return
         user = _google_get_userinfo(access_token)
-        session = SESSIONS.setdefault(session_id, {})
+        session = session_store.get_or_create(session_id)
         session["google_access_token"] = access_token
         if token_payload.get("refresh_token"):
             session["google_refresh_token"] = str(token_payload.get("refresh_token"))
@@ -665,7 +664,7 @@ class AppHandler(BaseHTTPRequestHandler):
         if not access_token:
             self._send_json({"error": "Notion OAuth did not return access_token."}, HTTPStatus.BAD_REQUEST)
             return
-        session = SESSIONS.setdefault(session_id, {})
+        session = session_store.get_or_create(session_id)
         session["notion_access_token"] = access_token
         if token_payload.get("refresh_token"):
             session["notion_refresh_token"] = str(token_payload.get("refresh_token"))
@@ -684,19 +683,16 @@ class AppHandler(BaseHTTPRequestHandler):
         for part in cookies.split(";"):
             name, _, value = part.strip().partition("=")
             if name == "github_ai_agent_session" and value:
-                SESSIONS.setdefault(value, {})
                 return value
         session_id = secrets.token_urlsafe(24)
-        SESSIONS.setdefault(session_id, {})
         return session_id
 
-    def _session(self) -> dict[str, Any]:
-        return SESSIONS.setdefault(self._session_id(), {})
+    def _session(self) -> session_store.SessionProxy:
+        return session_store.get_or_create(self._session_id())
 
     def _handle_logout(self) -> None:
         session_id = self._cookie("github_ai_agent_session")
         if session_id:
-            SESSIONS.pop(session_id, None)
             session_store.clear(session_id)
             for state, state_session_id in list(OAUTH_STATES.items()):
                 if state_session_id == session_id:

@@ -46,6 +46,7 @@ async def async_main() -> None:
         model=args.model,
         owner=args.owner,
         repo=args.repo,
+        approved_tools={"create_notion_task"} if args.save_to_notion else set(),
     )
 
     if args.backend == "mcp":
@@ -67,6 +68,12 @@ async def async_main() -> None:
     if args.debug:
         print(f"\n[Selected GitHub tools: {args.backend}]")
         print(json.dumps(result.selected_tools, ensure_ascii=False, indent=2))
+        if result.blocked_actions:
+            print("\n[Blocked actions: approval required]")
+            print(json.dumps(result.blocked_actions, ensure_ascii=False, indent=2))
+        if result.failures:
+            print("\n[Tool failures]")
+            print(json.dumps(result.failures, ensure_ascii=False, indent=2))
         print("\n[Answer]")
 
     print(result.answer)

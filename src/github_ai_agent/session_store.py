@@ -19,6 +19,12 @@ _FIELD_MAP: dict[str, tuple[str, str, bool]] = {
     "google_access_token": ("google_credentials", "access_token_enc", True),
     "google_refresh_token": ("google_credentials", "refresh_token_enc", True),
     "google_email": ("google_credentials", "email", False),
+    "notion_access_token": ("notion_credentials", "access_token_enc", True),
+    "notion_refresh_token": ("notion_credentials", "refresh_token_enc", True),
+    "notion_workspace_id": ("notion_credentials", "workspace_id", False),
+    "notion_workspace_name": ("notion_credentials", "workspace_name", False),
+    "notion_database_id": ("notion_credentials", "database_id", False),
+    "notion_page_id": ("notion_credentials", "page_id", False),
 }
 _ENC_KEY_VERSION = 1
 
@@ -31,12 +37,30 @@ def _db_path() -> str:
 def _fernet() -> Fernet:
     key = os.environ.get("SESSION_ENC_KEY", "").strip()
     if not key:
-        raise RuntimeError(
-            "SESSION_ENC_KEY is required to store session credentials. "
-            "Generate one with: "
-            'python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"'
-        )
+        key_path = Path(_db_path()).resolve().with_suffix(".key")
+        if key_path.exists():
+            key = key_path.read_text(encoding="ascii").strip()
+        else:
+            key = Fernet.generate_key().decode("ascii")
+            key_path.write_text(key, encoding="ascii")
     return Fernet(key.encode("ascii"))
+
+
+def _migrate_columns(connection: sqlite3.Connection) -> None:
+    existing = {
+        str(row[1])
+        for row in connection.execute("PRAGMA table_info(notion_credentials)")
+    }
+    for column, declaration in {
+        "workspace_id": "TEXT",
+        "database_id": "TEXT",
+        "page_id": "TEXT",
+        "refresh_token_enc": "BLOB",
+    }.items():
+        if column not in existing:
+            connection.execute(
+                f"ALTER TABLE notion_credentials ADD COLUMN {column} {declaration}"
+            )
 
 
 @contextmanager
@@ -45,6 +69,7 @@ def _connection() -> Iterator[sqlite3.Connection]:
     try:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
+        _migrate_columns(connection)
         with connection:
             yield connection
     finally:

@@ -490,6 +490,22 @@
       text-align: left;
       line-height: 1.55;
     }
+    .task-list {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 10px;
+      width: 100%;
+      min-width: 0;
+      overflow: visible;
+    }
+    .task-list .task {
+      width: 100%;
+      min-width: 0;
+      margin-bottom: 0;
+    }
+    .task-results > section {
+      overflow-x: hidden;
+    }
     .empty-illustration {
       width: 58px;
       height: 58px;
@@ -506,7 +522,7 @@
     .task-head { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; margin-bottom: 8px; }
     .task-title { font-weight: 850; overflow-wrap: anywhere; }
     .tool { border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px; background: var(--panel-soft); }
-    pre { margin: 8px 0 0; overflow: auto; border-radius: 8px; background: var(--code); padding: 10px; font-size: 12px; }
+    pre { margin: 8px 0 0; max-width: 100%; overflow-x: hidden; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; border-radius: 8px; background: var(--code); padding: 10px; font-size: 12px; }
     .error { color: var(--warn); font-weight: 800; }
     .diff-header-row { display: grid; grid-template-columns: 1fr 1fr; font-weight: 800; margin-top: 10px; }
     .readme-diff-grid {
