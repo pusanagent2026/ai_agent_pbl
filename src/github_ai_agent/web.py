@@ -48,6 +48,7 @@ from github_ai_agent.webapp.task_planning import (
     create_notion_tasks,
 )
 
+SESSIONS: dict[str, dict[str, Any]] = {}
 OAUTH_STATES: dict[str, str] = {}
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -123,8 +124,6 @@ class AppHandler(BaseHTTPRequestHandler):
                     "backend": "github-mcp",
                     "notion_enabled": notion.enabled or bool(session.get("notion_access_token")),
                     "calendar_enabled": _calendar_enabled_for_session(calendar, session),
-                    "notion_connected": bool(session.get("notion_access_token")),
-                    "calendar_connected": bool(session.get("google_access_token")),
                     "calendar_timezone": calendar.config.timezone,
                     "assignee_property": notion.config.assignee_property,
                     **_load_config_members(owner, repo, installation_id),
@@ -545,7 +544,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
         token = _exchange_github_code(code)
         user = _github_get("/user", token)
-        session = session_store.get_or_create(session_id)
+        session = SESSIONS.setdefault(session_id, {})
         session["github_access_token"] = token
         session["github_login"] = str(user.get("login") or "")
         self._redirect("/", session_id)
@@ -566,7 +565,7 @@ class AppHandler(BaseHTTPRequestHandler):
         installation_id = (query.get("installation_id") or [""])[0].strip()
         session_id = self._session_id()
         if installation_id:
-            session_store.get_or_create(session_id)["installation_id"] = installation_id
+            SESSIONS.setdefault(session_id, {})["installation_id"] = installation_id
         self._redirect("/", session_id)
 
     def _redirect_to_google_login(self) -> None:
@@ -618,7 +617,7 @@ class AppHandler(BaseHTTPRequestHandler):
             self._send_json({"error": "Google OAuth did not return access_token."}, HTTPStatus.BAD_REQUEST)
             return
         user = _google_get_userinfo(access_token)
-        session = session_store.get_or_create(session_id)
+        session = SESSIONS.setdefault(session_id, {})
         session["google_access_token"] = access_token
         if token_payload.get("refresh_token"):
             session["google_refresh_token"] = str(token_payload.get("refresh_token"))
@@ -664,7 +663,7 @@ class AppHandler(BaseHTTPRequestHandler):
         if not access_token:
             self._send_json({"error": "Notion OAuth did not return access_token."}, HTTPStatus.BAD_REQUEST)
             return
-        session = session_store.get_or_create(session_id)
+        session = SESSIONS.setdefault(session_id, {})
         session["notion_access_token"] = access_token
         if token_payload.get("refresh_token"):
             session["notion_refresh_token"] = str(token_payload.get("refresh_token"))
@@ -677,39 +676,48 @@ class AppHandler(BaseHTTPRequestHandler):
         if pages:
             session["notion_page_id"] = pages[0]["id"]
         self._redirect("/", session_id)
+        
+    def _handle_logout(self) -> None:
+        session_id = self._cookie("github_ai_agent_session")
+        if session_id:
+            SESSIONS.pop(session_id, None)
+            for state, owner_session_id in list(OAUTH_STATES.items()):
+                if owner_session_id == session_id:
+                    OAUTH_STATES.pop(state, None)
+            try:
+                session_store.clear(session_id)
+            except Exception as error:
+                print(f"Session store logout cleanup failed: {error}")
+
+        self.send_response(HTTPStatus.FOUND)
+        self.send_header("Location", "/")
+        self.send_header(
+            "Set-Cookie",
+            "github_ai_agent_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax",
+        )
+        self.send_header(
+            "Set-Cookie",
+            "google_oauth_state=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax",
+        )
+        self.send_header(
+            "Set-Cookie",
+            "notion_oauth_state=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax",
+        )
+        self.end_headers()
 
     def _session_id(self) -> str:
         cookies = self.headers.get("Cookie", "")
         for part in cookies.split(";"):
             name, _, value = part.strip().partition("=")
             if name == "github_ai_agent_session" and value:
+                SESSIONS.setdefault(value, {})
                 return value
         session_id = secrets.token_urlsafe(24)
+        SESSIONS.setdefault(session_id, {})
         return session_id
 
-    def _session(self) -> session_store.SessionProxy:
-        return session_store.get_or_create(self._session_id())
-
-    def _handle_logout(self) -> None:
-        session_id = self._cookie("github_ai_agent_session")
-        if session_id:
-            session_store.clear(session_id)
-            for state, state_session_id in list(OAUTH_STATES.items()):
-                if state_session_id == session_id:
-                    OAUTH_STATES.pop(state, None)
-
-        self.send_response(HTTPStatus.FOUND)
-        self.send_header("Location", "/")
-        for cookie_name in (
-            "github_ai_agent_session",
-            "google_oauth_state",
-            "notion_oauth_state",
-        ):
-            self.send_header(
-                "Set-Cookie",
-                f"{cookie_name}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax",
-            )
-        self.end_headers()
+    def _session(self) -> dict[str, Any]:
+        return SESSIONS.setdefault(self._session_id(), {})
 
     def _cookie(self, cookie_name: str) -> str:
         cookies = self.headers.get("Cookie", "")
