@@ -92,6 +92,6 @@ class GitHubMcpClient:
                 chunks.append(str(item))
 
         if result.isError:
-            return "MCP tool returned an error:\n" + "\n".join(chunks)
+            raise RuntimeError("MCP tool returned an error:\n" + "\n".join(chunks))
 
         return "\n".join(chunks)

@@ -10,6 +10,7 @@ secrets/
 *.db
 *.db-wal
 *.db-shm
+sessions.key
 
 .pytest_cache/
 .mypy_cache/

@@ -69,6 +69,7 @@ let calendarView = "list";
 let loadedCalendarEvents = [];
 let lastUserQuestion = "";
 let lastAnalysisAnswerText = "";
+let lastProjectQuestion = "";
 let currentNotionSaveMode = "database";
 let shouldCreateNotionDatabaseBeforeSave = false;
 
@@ -895,6 +896,8 @@ function renderTools(selectedTools) {
 }
 
 function renderTaskEmptyState(message, icon = "☑") {
+  tasks.classList.remove("task-list");
+  tasks.classList.add("task-empty-state");
   tasks.innerHTML = `
         <div class="task-empty-state">
           <span class="empty-illustration">${escapeHtml(icon)}</span>
@@ -910,6 +913,8 @@ function renderTasks(items) {
     refreshApproveButtons();
     return;
   }
+  tasks.classList.remove("task-empty-state");
+  tasks.classList.add("task-list");
   tasks.innerHTML = "";
   proposedTasks.forEach((task, index) => {
     const div = document.createElement("div");
@@ -932,6 +937,25 @@ function renderTasks(items) {
     tasks.appendChild(div);
   });
   refreshApproveButtons();
+}
+
+function formatProposedTasksForChat(items, existingAnswer = "") {
+  const proposed = items || [];
+  if (!proposed.length) return "";
+  if (
+    proposed.every(
+      (task) => task.title && existingAnswer.includes(task.title),
+    )
+  ) {
+    return "";
+  }
+  const lines = proposed.map((task) => {
+    const priority = task.priority || "Medium";
+    const assignee = task.assignee || task.assignee_github || "미정";
+    const reason = task.reason ? `\n  근거: ${task.reason}` : "";
+    return `- [${priority}] ${task.title} — 담당: ${assignee}${reason}`;
+  });
+  return `\n\n제안 작업\n${lines.join("\n")}`;
 }
 
 function selectedTasks() {
@@ -1035,18 +1059,116 @@ async function savePreviousAnswerToNotion(text) {
   scrollChatToBottom();
 }
 
+function isExplicitNotionSaveRequest(text) {
+  const normalized = (text || "").toLowerCase();
+  return (
+    /(notion|노션)/i.test(normalized) &&
+    /(저장|기록|등록|남겨|올려|업로드|추가)/i.test(normalized) &&
+    Boolean(lastAnalysisAnswerText || proposedTasks.length)
+  );
+}
+
+function isExplicitCalendarSaveRequest(text) {
+  const normalized = (text || "").toLowerCase();
+  return (
+    /(calendar|캘린더|달력|일정)/i.test(normalized) &&
+    /(저장|기록|등록|추가|잡아|생성|만들)/i.test(normalized) &&
+    proposedTasks.length > 0
+  );
+}
+
+async function savePreviousResultToNotion(text) {
+  lastUserQuestion = text;
+  const saveMode = updateNotionSaveModeFromText(text);
+  appendUserChatMessage(text);
+  question.value = "";
+  const currentAnswer = appendAssistantChatMessage(
+    `명시적인 요청을 승인으로 확인했습니다. 방금 결과를 Notion ${notionSaveModeLabel(saveMode)} 방식으로 저장합니다.`,
+  );
+  answer = currentAnswer;
+  await postSelectedTasks(
+    "/api/approve-tasks",
+    "Saving to Notion...",
+    "Notion 등록 완료",
+  );
+  scrollChatToBottom();
+}
+
+async function savePreviousTasksToCalendar(text) {
+  lastUserQuestion = text;
+  appendUserChatMessage(text);
+  question.value = "";
+  const currentAnswer = appendAssistantChatMessage(
+    "명시적인 요청을 승인으로 확인했습니다. 선택된 작업을 Google Calendar에 등록합니다.",
+  );
+  answer = currentAnswer;
+  await postSelectedTasks(
+    "/api/approve-calendar-events",
+    "Saving to Calendar...",
+    "Calendar 등록 완료",
+  );
+  scrollChatToBottom();
+}
+
+function requiresGithubAnalysis(text) {
+  const normalized = (text || "").toLowerCase();
+  if (/^(안녕|안녕하세요|반가워|고마워|감사|hello|hi)[!.?\s]*$/i.test(normalized)) {
+    return false;
+  }
+  return /(github|깃허브|프로젝트|저장소|레포|repository|이슈|issue|\bpr\b|커밋|commit|브랜치|코드|readme|리드미|팀원|우리\s*팀|구성원|멤버|참여자|작업|업무|할\s*일|배분|분배|리뷰|workflow|워크플로|blocker|병목|진행(?:을)?\s*막|차단\s*요인)/i.test(
+    normalized,
+  );
+}
+
+function isAffirmativeFollowUp(text) {
+  return /^(응|웅|네|예|그래|좋아|진행해|해줘|해주세요|okay|ok|yes)[.!?\s]*$/i.test(
+    (text || "").trim(),
+  );
+}
+
+function continuesPendingProjectRequest(text) {
+  if (!isAffirmativeFollowUp(text) || !lastProjectQuestion) return false;
+  const previousAnswer = (lastAnalysisAnswerText || "").trim();
+  const offeredProjectLookup =
+    /(진행할까요|진행해도 될까요|확인할까요|조사할까요|조회할까요|확인해\s*드릴까요|해드릴까요)/i.test(
+      previousAnswer,
+    );
+  const mentionsReadableGithubScope =
+    /(github|깃허브|저장소|이슈|issue|\bpr\b|커밋|commit|브랜치|workflow|워크플로|팀원|contributor|collaborator)/i.test(
+      previousAnswer,
+    );
+  return offeredProjectLookup && mentionsReadableGithubScope;
+}
+
+function contextualizeFollowUp(text) {
+  if (!continuesPendingProjectRequest(text)) return text;
+  return [
+    `직전 사용자 요청: ${lastProjectQuestion}`,
+    `직전 Agent 응답: ${lastAnalysisAnswerText}`,
+    `사용자의 후속 응답: ${text}`,
+    "사용자가 직전에 제안한 GitHub 조회 진행에 동의했습니다. 질문을 새 대화로 취급하지 말고, 제안했던 조회를 지금 실행한 뒤 결과를 답하세요.",
+  ].join("\n");
+}
+
 async function analyzeGithub() {
   const text = question.value.trim();
   if (!text) {
     question.focus();
     return;
   }
-  if (isFollowUpNotionSaveRequest(text)) {
-    await savePreviousAnswerToNotion(text);
+  if (isExplicitNotionSaveRequest(text)) {
+    await savePreviousResultToNotion(text);
     question.value = "";
     return;
   }
-  if (!selectedRepository.owner || !selectedRepository.repo) {
+  if (isExplicitCalendarSaveRequest(text)) {
+    await savePreviousTasksToCalendar(text);
+    question.value = "";
+    return;
+  }
+  const effectiveQuestion = contextualizeFollowUp(text);
+  const needsGithub = requiresGithubAnalysis(effectiveQuestion);
+  if (needsGithub && (!selectedRepository.owner || !selectedRepository.repo)) {
     status.textContent = "GitHub 연결 필요";
     answer.innerHTML =
       "<span class='error'>먼저 GitHub에 연결하고 분석할 저장소를 선택해주세요.</span>";
@@ -1058,28 +1180,37 @@ async function analyzeGithub() {
     return;
   }
   lastUserQuestion = text;
-  const requestedNotionMode = updateNotionSaveModeFromText(text);
+  if (needsGithub && effectiveQuestion === text) {
+    lastProjectQuestion = text;
+  }
+  const requestedNotionMode = needsGithub
+    ? updateNotionSaveModeFromText(text)
+    : currentNotionSaveMode;
   appendUserChatMessage(text);
   question.value = "";
   await wait(520);
   const currentAnswer = appendAssistantChatMessage(
-    "GitHub MCP/API 기록에서 팀원, 작업 성향, 마감일 후보를 분석하는 중입니다.",
+    needsGithub
+      ? "GitHub 기록에서 질문과 관련된 정보를 확인하는 중입니다."
+      : "답변을 작성하는 중입니다.",
   );
   analyze.disabled = true;
   approveNotion.disabled = true;
   approveCalendar.disabled = true;
-  status.textContent = "Analyzing GitHub...";
-  renderTaskEmptyState(
-    "GitHub 기록을 바탕으로 할 일 후보를 생성하는 중입니다.",
-    "…",
-  );
+  status.textContent = needsGithub ? "Analyzing GitHub..." : "Thinking...";
+  if (needsGithub) {
+    renderTaskEmptyState(
+      "GitHub 기록을 바탕으로 할 일 후보를 생성하는 중입니다.",
+      "…",
+    );
+  }
 
   try {
     const response = await fetch("/api/analyze-tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        question: text,
+        question: effectiveQuestion,
         project_deadline: projectDeadline.value,
         owner: selectedRepository.owner,
         repo: selectedRepository.repo,
@@ -1090,14 +1221,29 @@ async function analyzeGithub() {
     if (!response.ok) {
       throw new Error(payload.error || "Request failed");
     }
-    lastAnalysisAnswerText = payload.answer || "";
-    const notionHint = `\n\nNotion 저장 방식 판단\n1. 채팅 내용을 기준으로 '${notionSaveModeLabel(requestedNotionMode)}' 방식으로 해석했습니다.\n2. 저장하려면 아래의 'Notion ${notionSaveModeLabel(requestedNotionMode)} 승인' 버튼을 눌러주세요.`;
-    currentAnswer.textContent = `${payload.answer}${notionHint}`;
+    const isLightweightReply = ["conversation", "general_question"].includes(
+      payload.agent_intent,
+    );
+    if (!isLightweightReply) {
+      lastAnalysisAnswerText = payload.answer || "";
+    }
+    const notionHint = isLightweightReply
+      ? ""
+      : `\n\nNotion 저장 방식 판단\n1. 채팅 내용을 기준으로 '${notionSaveModeLabel(requestedNotionMode)}' 방식으로 해석했습니다.\n2. 저장하려면 아래의 'Notion ${notionSaveModeLabel(requestedNotionMode)} 승인' 버튼을 눌러주세요.`;
+    const taskSummary = isLightweightReply
+      ? ""
+      : formatProposedTasksForChat(
+          payload.proposed_tasks || [],
+          payload.answer || "",
+        );
+    currentAnswer.textContent = `${payload.answer}${taskSummary}${notionHint}`;
     answer = currentAnswer;
     scrollChatToBottom();
     renderTools(payload.selected_tools || []);
-    renderTasks(payload.proposed_tasks || []);
-    status.textContent = "Approval required";
+    if (!isLightweightReply) {
+      renderTasks(payload.proposed_tasks || []);
+    }
+    status.textContent = isLightweightReply ? "Ready" : "Approval required";
   } catch (error) {
     proposedTasks = [];
     currentAnswer.innerHTML = `<span class="error">${escapeHtml(error.message)}</span>`;

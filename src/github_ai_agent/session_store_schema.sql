@@ -66,10 +66,14 @@ CREATE TABLE IF NOT EXISTS google_credentials (
 -- table is unused today. Reserved for if/when Notion moves to per-user OAuth.
 CREATE TABLE IF NOT EXISTS notion_credentials (
     session_id        TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+    workspace_id       TEXT,
     workspace_name     TEXT,
-    access_token_enc  BLOB,
-    enc_key_version   INTEGER,
-    updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    database_id        TEXT,
+    page_id            TEXT,
+    access_token_enc   BLOB,
+    refresh_token_enc  BLOB,
+    enc_key_version    INTEGER,
+    updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);

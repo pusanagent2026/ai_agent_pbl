@@ -10,6 +10,77 @@ from github_ai_agent.mcp_client import GitHubMcpClient
 from github_ai_agent.notion_client import NotionToolClient
 
 
+class _NoToolsClient:
+    async def list_tools(self) -> list[Any]:
+        return []
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        raise ValueError(f"대화 응답에서는 도구를 호출할 수 없습니다: {name}")
+
+
+def build_harness_analysis_prompt(question: str, project_deadline: str) -> str:
+    today = date.today().isoformat()
+    if project_deadline:
+        deadline_instruction = (
+            f"프로젝트 전체 마감일은 {project_deadline}입니다. 작업별 마감일은 이 날짜를 "
+            "넘지 않도록 우선순위와 작업량을 고려해 분산하세요."
+        )
+    else:
+        deadline_instruction = (
+            "프로젝트 전체 마감일이 입력되지 않았습니다. 임의의 마감일을 만들지 말고 "
+            "작업의 due는 빈 문자열로 두세요."
+        )
+    return f"""
+오늘 날짜: {today}
+{deadline_instruction}
+
+사용자 요청:
+{question}
+
+질문에 직접 필요한 GitHub 도구만 선택해 사실을 확인하세요. 팀원이나 작업 분배 요청이면
+contributors 또는 collaborators, 최근 커밋, 열린 이슈와 PR을 필요한 범위에서 확인하세요.
+GitHub 조회는 읽기 전용이므로 범위나 진행 여부를 사용자에게 되묻지 마세요. 질문에 맞는 최소 범위를
+스스로 선택해 이번 응답에서 바로 도구를 호출하고 결과를 제시하세요. 팀원 질문은 collaborators 또는
+contributors와 최근 commit/PR 작성자를, 막힌 문제 질문은 blocker/high-priority 열린 issue, 병합을
+막는 PR 상태, 최근 실패 workflow를 기본 범위로 사용하세요.
+권한 때문에 collaborators 조회가 실패하면 그 사실을 밝히고 확인 가능한 contributor와
+최근 활동만 근거로 사용하세요. 근거가 부족한 담당자 배정은 추정이라고 표시하세요.
+
+사용자가 팀 목록만 요청했다면 proposed_tasks는 빈 배열로 두세요. 작업 분배 요청이면
+구체적인 작업을 최대 5개 제안하고 priority, reason, assignee와 GitHub 근거를 포함하세요.
+작업을 제안했다면 answer 본문에도 각 작업의 제목, 우선순위, 담당자와 핵심 근거를 빠뜨리지 말고
+읽기 쉬운 목록으로 보여주세요. proposed_tasks에만 넣고 answer에서 생략하지 마세요.
+열린 이슈나 PR이 없더라도 확인하지 않은 일을 사실처럼 만들지 마세요.
+마감일이 입력되지 않았다는 사실은 필요할 때 한 문장으로만 안내하고, "due를 빈 문자열로 둔다" 같은
+내부 데이터 표현을 사용자 답변에 노출하지 마세요.
+Notion 저장과 Calendar 등록은 이 분석 단계에서 실행하지 마세요.
+
+응답은 아래 JSON 객체 하나만 출력하세요. answer는 고정 섹션이나 기계적인 번호 목록을
+강제하지 말고, 핵심 결과와 근거 및 다음 행동을 자연스러운 한국어로 작성하세요.
+사용자가 링크를 요청하지 않았다면 GitHub URL을 출력하지 마세요. 커밋 SHA가 필요하면 앞 7자리만
+표시하고, 원시 ISO 시간 대신 YYYY-MM-DD 형식의 날짜를 사용하세요.
+팀원·활동 조회 답변은 짧은 결론 다음에 '구성원', '최근 활동', 'Agent 판단'처럼 내용에 맞는 짧은
+제목으로 나누세요. 구성원은 한 사람당 한 줄, 최근 활동은 핵심 5건 이내로 제한하고, 같은 근거와
+조회 방법을 본문·참고·제안에서 반복하지 마세요. 추가 조회 제안은 마지막 한 문장 이내로 작성하세요.
+
+{{
+  "answer": "자연스러운 한국어 답변",
+  "proposed_tasks": [
+    {{
+      "title": "구체적인 작업 제목",
+      "status": "To do",
+      "priority": "High 또는 Medium 또는 Low",
+      "source": "확인한 GitHub 근거",
+      "due": "YYYY-MM-DD 또는 빈 문자열",
+      "reason": "배정 근거와 필요한 이유",
+      "assignee": "담당자 이름 또는 GitHub ID",
+      "assignee_github": "담당자 GitHub ID"
+    }}
+  ]
+}}
+""".strip()
+
+
 async def analyze_tasks(
     question: str,
     *,
@@ -19,24 +90,58 @@ async def analyze_tasks(
     installation_id: str = "",
 ) -> dict[str, Any]:
     agent = GitHubToolChoosingAgent(owner=owner or None, repo=repo or None)
-    async with GitHubMcpClient(installation_id=installation_id or None) as github_tools:
+    analysis_prompt = build_harness_analysis_prompt(question, project_deadline)
+    decision = agent.harness.classify_intent(question)
+    if not decision.requires_project_context:
         result = await agent.run(
-            build_analysis_prompt(question, project_deadline),
-            github_tools,
+            question,
+            _NoToolsClient(),
+            intent_input=question,
         )
+    else:
+        async with GitHubMcpClient(installation_id=installation_id or None) as github_tools:
+            result = await agent.run(
+                analysis_prompt,
+                github_tools,
+                intent_input=question,
+            )
 
     parsed = parse_task_json(result.answer)
+    answer = clean_answer_for_chat(parsed.get("answer") or result.answer)
     return {
-        "answer": parsed.get("answer") or result.answer,
+        "answer": answer,
         "proposed_tasks": normalize_tasks(
             parsed.get("proposed_tasks", []),
             project_deadline=project_deadline,
         ),
         "selected_tools": [
-            {"tool": "github_backend", "arguments": {"backend": "mcp"}},
+            *(
+                [{"tool": "github_backend", "arguments": {"backend": "mcp"}}]
+                if decision.requires_project_context
+                else []
+            ),
             *result.selected_tools,
         ],
+        "agent_intent": result.intent,
+        "blocked_actions": result.blocked_actions,
+        "tool_failures": result.failures,
     }
+
+
+def clean_answer_for_chat(answer: str) -> str:
+    """Remove noisy raw links that make the dashboard chat hard to scan."""
+    import re
+
+    cleaned = re.sub(
+        r"\s*\((?:커밋\s*)?URL\s*:\s*https?://[^)\s]+\)",
+        "",
+        answer,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"https?://github\.com/\S+", "", cleaned)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 
 async def create_notion_tasks(
