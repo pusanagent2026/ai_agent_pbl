@@ -9,6 +9,8 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from github_ai_agent.github_app_auth import GitHubAppTokenProvider
+
 
 @dataclass(frozen=True)
 class McpTool:
@@ -18,11 +20,12 @@ class McpTool:
 
 
 class GitHubMcpClient:
-    def __init__(self, command: str | None = None) -> None:
+    def __init__(self, command: str | None = None, installation_id: str | None = None) -> None:
         self.command = command or os.environ.get("GITHUB_MCP_COMMAND")
         if not self.command:
             raise ValueError("GITHUB_MCP_COMMAND is required.")
 
+        self.installation_id = installation_id
         self._stack = AsyncExitStack()
         self._session: ClientSession | None = None
 
@@ -32,7 +35,14 @@ class GitHubMcpClient:
             raise ValueError("GITHUB_MCP_COMMAND is empty.")
 
         env = os.environ.copy()
-        if env.get("GITHUB_TOKEN") and not env.get("GITHUB_PERSONAL_ACCESS_TOKEN"):
+        command_dir = os.path.dirname(parts[0])
+        if command_dir and os.path.basename(parts[0]).lower() in {"docker", "docker.exe"}:
+            env["PATH"] = command_dir + os.pathsep + env.get("PATH", "")
+
+        app_token_provider = GitHubAppTokenProvider(self.installation_id)
+        if app_token_provider.enabled:
+            env["GITHUB_PERSONAL_ACCESS_TOKEN"] = app_token_provider.create_installation_token()
+        elif env.get("GITHUB_TOKEN") and not env.get("GITHUB_PERSONAL_ACCESS_TOKEN"):
             env["GITHUB_PERSONAL_ACCESS_TOKEN"] = env["GITHUB_TOKEN"]
 
         server_params = StdioServerParameters(
@@ -82,6 +92,6 @@ class GitHubMcpClient:
                 chunks.append(str(item))
 
         if result.isError:
-            return "MCP tool returned an error:\n" + "\n".join(chunks)
+            raise RuntimeError("MCP tool returned an error:\n" + "\n".join(chunks))
 
         return "\n".join(chunks)

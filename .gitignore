@@ -1,9 +1,16 @@
 .venv/
+.venv-codex/
 __pycache__/
 *.py[cod]
 
 .env
+secrets/
+*.pem
 .env.*
+*.db
+*.db-wal
+*.db-shm
+sessions.key
 
 .pytest_cache/
 .mypy_cache/

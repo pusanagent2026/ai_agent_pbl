@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DEVFLOW AI Agent</title>
+  <link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body>
+  <div class="onboarding" id="onboarding">
+    <div class="onboarding-card">
+      <section class="onboarding-left">
+        <div class="onboarding-brand"><span>DEVFLOW AI Agent</span></div>
+        <div class="welcome-copy">
+          <div class="welcome">&#xd658;&#xc601;&#xd569;&#xb2c8;&#xb2e4;</div>
+          <h1>DEVFLOW <span>AI Agent</span></h1>
+          <p>GitHub, Notion, Google Calendar&#xb97c; &#xc5f0;&#xacb0;&#xd558;&#xc5ec; AI &#xae30;&#xbc18;&#xc73c;&#xb85c; &#xc5c5;&#xbb34;&#xb97c; &#xd6a8;&#xc728;&#xc801;&#xc73c;&#xb85c; &#xad00;&#xb9ac;&#xd558;&#xace0; &#xc791;&#xc5c5;&#xc744; &#xc2a4;&#xb9c8;&#xd2b8;&#xd558;&#xac8c; &#xbd84;&#xbc30;&#xd574;&#xbcf4;&#xc138;&#xc694;.</p>
+        </div>
+        <div class="welcome-visual" aria-hidden="true"></div>
+      </section>
+      <section class="onboarding-right">
+        <h2>&#xc2dc;&#xc791;&#xd558;&#xb824;&#xba74; &#xacc4;&#xc815;&#xc744; &#xc5f0;&#xacb0;&#xd574;&#xc8fc;&#xc138;&#xc694;</h2>
+        <p>&#xc5f0;&#xacb0;&#xb41c; &#xacc4;&#xc815;&#xc740; &#xc548;&#xc804;&#xd558;&#xac8c; &#xc800;&#xc7a5;&#xb418;&#xba70;, &#xc2b9;&#xc778;&#xb41c; &#xc791;&#xc5c5;&#xc5d0;&#xb9cc; &#xc0ac;&#xc6a9;&#xb429;&#xb2c8;&#xb2e4;.</p>
+        <div class="onboarding-scroll">
+          <div class="onboarding-step-window">
+            <div class="onboarding-step-track" id="onboardingStepTrack">
+              <div class="onboarding-step">
+                <div class="onboarding-actions">
+                  <a class="onboarding-connect" id="onboardingInstallGithub" href="/auth/github/install">
+                    <span class="onboarding-icon">GH</span>
+                    <span><strong>GitHub &#xc571; &#xc124;&#xce58;</strong><small>&#xcc98;&#xc74c; &#xc0ac;&#xc6a9;&#xd558;&#xb294; &#xc800;&#xc7a5;&#xc18c;&#xb294; &#xba3c;&#xc800; GitHub &#xc571; &#xc124;&#xce58;&#xac00; &#xd544;&#xc694;&#xd569;&#xb2c8;&#xb2e4;.</small></span>
+                    <span class="onboarding-arrow">&rsaquo;</span>
+                  </a>
+                  <a class="onboarding-connect" id="onboardingGithub" href="/auth/github">
+                    <span class="onboarding-icon">GH</span>
+                    <span><strong id="onboardingGithubTitle">GitHub &#xc5f0;&#xacb0;</strong><small id="onboardingGithubDesc">GitHub &#xacc4;&#xc815;&#xc744; &#xc5f0;&#xacb0;&#xd558;&#xc5ec; &#xc800;&#xc7a5;&#xc18c;&#xc640; &#xc774;&#xc288;&#xc5d0; &#xc811;&#xadfc;&#xd569;&#xb2c8;&#xb2e4;.</small></span>
+                    <span class="onboarding-arrow">&rsaquo;</span>
+                  </a>
+                  <label class="onboarding-repo-picker" id="onboardingRepoField" hidden>
+                    <span>&#xbd84;&#xc11d;&#xd560; GitHub &#xc800;&#xc7a5;&#xc18c; &#xc120;&#xd0dd;</span>
+                    <select id="onboardingRepoSelect">
+                      <option value="">&#xc800;&#xc7a5;&#xc18c;&#xb97c; &#xc120;&#xd0dd;&#xd574;&#xc8fc;&#xc138;&#xc694;</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              <div class="onboarding-step">
+                <div class="onboarding-actions">
+                  <a class="onboarding-connect" id="onboardingNotion" href="/auth/notion">
+                    <span class="onboarding-icon">N</span>
+                    <span><strong id="onboardingNotionTitle">Notion &#xc5f0;&#xacb0;</strong><small id="onboardingNotionDesc">Notion &#xacc4;&#xc815;&#xc744; &#xc5f0;&#xacb0;&#xd558;&#xc5ec; &#xd398;&#xc774;&#xc9c0;&#xc640; &#xb370;&#xc774;&#xd130;&#xb97c; &#xd65c;&#xc6a9;&#xd569;&#xb2c8;&#xb2e4;.</small></span>
+                    <span class="onboarding-arrow">&rsaquo;</span>
+                  </a>
+                  <a class="onboarding-connect" id="onboardingGoogle" href="/auth/google">
+                    <span class="onboarding-icon">31</span>
+                    <span><strong id="onboardingGoogleTitle">Google Calendar &#xc5f0;&#xacb0;</strong><small id="onboardingGoogleDesc">Google &#xacc4;&#xc815;&#xc744; &#xc5f0;&#xacb0;&#xd558;&#xc5ec; &#xc77c;&#xc815;&#xc744; &#xad00;&#xb9ac;&#xd569;&#xb2c8;&#xb2e4;.</small></span>
+                    <span class="onboarding-arrow">&rsaquo;</span>
+                  </a>
+                  <button class="agent-start-button" id="agentStart" type="button" hidden>AGENT START</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="onboarding-foot" id="onboardingFoot">&#xc5f0;&#xacb0;&#xc740; &#xc5b8;&#xc81c;&#xb4e0; &#xc124;&#xc815;&#xc5d0;&#xc11c; &#xbcc0;&#xacbd;&#xd560; &#xc218; &#xc788;&#xc2b5;&#xb2c8;&#xb2e4;.</div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="/assets/onboarding.js"></script>
+</body>
+</html>
